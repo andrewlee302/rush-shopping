@@ -7,6 +7,7 @@
 1. <a href="#carts">创建篮子</a>
 1. <a href="#item">添加物品</a>
 1. <a href="#order">下单</a>
+2. <a href="#pay">支付</a>
 1. <a href="#orders">查询订单</a>
 1. <a href="#admin-orders">后台接口－查询订单</a>
 
@@ -292,6 +293,73 @@ POST /orders?access_token=xxx
     "message": "每个用户只能下一单"
 }
 ```
+<a name="pay" />
+## 支付
+
+`POST /pay`
+
+##### 请求体
+
+参数名 | 类型 | 描述
+---|---|---
+order_id | string | 订单id
+
+#### 请求示例
+
+```
+POST /pay?access_token=xxx
+{
+    "order_id": "e0c68eb96bd8495dbb8fcd8e86fc48a3"
+}
+```
+
+#### 响应示例
+
+```
+204 No content
+```
+
+#### 异常示例
+
+订单不存在
+
+```
+404 Not Found
+{
+    "code": "ORDER_NOT_FOUND",
+    "message": "订单不存在"
+}
+```
+
+订单不属于当前用户
+
+```
+401 Unauthorized
+{
+    "code": "NOT_AUTHORIZED_TO_ACCESS_ORDER",
+    "message": "无权限访问指定的订单"
+}
+```
+
+订单已支付
+
+```
+403 Forbidden
+{
+    "code": "ORDER_PAID",
+    "message": "订单已支付"
+}
+```
+
+余额不足
+
+```
+403 Forbidden
+{
+    "code": "BALANCE_INSUFFICIENT",
+    "message": "余额不足"
+}
+```
 
 <a name="orders" />
 ## 查询订单
@@ -314,6 +382,7 @@ GET /orders?access_token=xxx
             {"item_id": 2, "count": 1}
         ],
         "total": 10
+        "paid": true
     }
 ]
 ```

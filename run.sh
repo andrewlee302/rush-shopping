@@ -6,4 +6,5 @@ export KVSTORE_PORT="10001"
 export ITEM_CSV="data/items.csv"
 export USER_CSV="data/users.csv"
 go build main.go
-./main -cpuprofile=main.prof
+#if [[ $? == 0 ]] then; ./main -cpuprofile=main.prof;fi
+if [[ $? == 0 ]] then; ./main ;fi

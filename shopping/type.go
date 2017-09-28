@@ -1,5 +1,10 @@
 package shopping
 
+// The type of Id for Item and User is int.
+// To differ the two from others, we specify the
+// field IdStr to indicate the type of Id is string,
+// otherwise int.
+
 type Item struct {
 	Id    int `json:"id"`
 	Price int `json:"price"`
@@ -11,11 +16,12 @@ type LoginJson struct {
 	Password string `json:"password"`
 }
 
-type Cart struct {
+type Order struct {
 	// if total < 0, then is a order
-	Id         string      `json:"id"`
-	Items      []ItemCount `json:"items"`
-	TotalPrice int         `json:"total"`
+	IdStr   string      `json:"id"`
+	Items   []ItemCount `json:"items"`
+	Total   int         `json:"total"`
+	HasPaid bool        `json:"paid"`
 }
 
 type ItemCount struct {
@@ -23,18 +29,18 @@ type ItemCount struct {
 	Count  int `json:"count"`
 }
 
-type Order Cart
-
 // for GET /admin/orders
 type OrderDetail struct {
-	Id         string      `json:"id"`
-	UserId     int         `json:"user_id"`
-	Items      []ItemCount `json:"items"`
-	TotalPrice int         `json:"total"`
+	Order
+	UserId int `json:"user_id"`
 }
 
 type CartIdJson struct {
-	CartId int `json:"cart_id"`
+	IdStr string `json:"cart_id"`
+}
+
+type OrderIdJson struct {
+	IdStr string `json:"order_id"`
 }
 
 type UserIdAndPass struct {

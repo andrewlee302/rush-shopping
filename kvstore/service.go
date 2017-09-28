@@ -20,6 +20,8 @@ type TinyStore struct {
  * Start the kvstore server and return immediately.
  */
 func StartTinyStore(addr string) *TinyStore {
+	log.Printf("Start kvstore service on %s\n", addr)
+	defer log.Println("Closed kvstore service")
 	ts := &TinyStore{flatdata: make(map[string]string), hashdata: make(map[string](map[string]string)), setdata: make(map[string](map[string]string)), addr: addr}
 	rpcs := rpc.NewServer()
 	rpcs.Register(ts)

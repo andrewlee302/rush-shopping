@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"rush-shopping/kvstore"
@@ -25,6 +26,28 @@ const (
 	ORDERS_KEY  = "orders"
 	ITEMS_KEY   = "items"
 	CART_ID_KEY = "cartId"
+	BALANCE_KEY = "balance"
+)
+
+const (
+	ORDER_PAID_FLAG   = "P" // have been paid
+	ORDER_UNPAID_FLAG = "W" // wait to be paid
+)
+
+const ROOT_USER_ID = 0
+
+var ROOT_USER_TOKEN = userId2Token(ROOT_USER_ID)
+
+const (
+	RET_OK = iota
+	RET_NOT_FOUND
+	RET_NOT_AUTH
+	RET_CART_EMPTY
+	RET_OUT_OF_STOCK
+	RET_ITEM_OUT_OF_LIMIT
+	RET_ORDER_OUT_OF_LIMIT
+	RET_ORDER_PAID
+	RET_BALANCE_INSUFFICIENT
 )
 
 var (
@@ -39,6 +62,11 @@ var (
 	ITEM_NOT_FOUND_MSG       = []byte("{\"code\": \"ITEM_NOT_FOUND\",\"message\": \"物品不存在\"}")
 	ITEM_OUT_OF_STOCK_MSG    = []byte("{\"code\": \"ITEM_OUT_OF_STOCK\", \"message\": \"物品库存不足\"}")
 	ORDER_OUT_OF_LIMIT_MSG   = []byte("{\"code\": \"ORDER_OUT_OF_LIMIT\",\"message\": \"每个用户只能下一单\"}")
+
+	ORDER_NOT_FOUND_MSG      = []byte("{\"code\": \"ORDER_NOT_FOUND\", \"message\": \"篮子不存在\"}")
+	NOT_AUTHORIZED_ORDER_MSG = []byte("{\"code\": \"NOT_AUTHORIZED_TO_ACCESS_ORDER\",\"message\": \"无权限访问指定的篮子\"}")
+	ORDER_PAID_MSG           = []byte("{\"code\": \"ORDER_PAID\",\"message\": \"订单已支付\"}")
+	BALANCE_INSUFFICIENT_MSG = []byte("{\"code\": \"BALANCE_INSUFFICIENT\",\"message\": \"余额不足\"}")
 )
 
 var (
@@ -60,6 +88,8 @@ func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) {
 	server.HandleFunc(Add_ITEM, addFood)
 	server.HandleFunc(SUBMIT_OR_QUERY_ORDER, orderProcess)
 	server.HandleFunc(QUERY_ALL_ORDERS, queryAllOrders)
+	log.Printf("Start shopping service on %s\n", appAddr)
+	defer log.Println("Closed shopping service")
 	if err := http.ListenAndServe(appAddr, server); err != nil {
 		fmt.Println(err)
 	}
@@ -69,6 +99,8 @@ func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) {
  * Load user and item data to kvstore.
  */
 func loadUsersAndItems(userCsv, itemCsv string) {
+	log.Println("Load user and item data to kvstore")
+	defer log.Println("Finished data loading")
 
 	kvClient.Put(CART_ID_KEY, "0")
 
@@ -83,6 +115,7 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 		for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
 			userId, _ := strconv.Atoi(strs[0])
 			UserMap[strs[1]] = UserIdAndPass{userId, strs[2]}
+			kvClient.HSet(BALANCE_KEY, userId2Token(userId), strs[3])
 			if userId > MaxUserID {
 				MaxUserID = userId
 			}
@@ -106,7 +139,6 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 			stock, _ := strconv.Atoi(strs[2])
 			ItemList = append(ItemList, Item{Id: itemId, Price: price, Stock: stock})
 
-			// fmt.Println(itemCnt, itemId, stock)
 			start := time.Now()
 			kvClient.HSet(ITEMS_KEY, strs[0], strs[2])
 			cost += time.Since(start).Nanoseconds()
@@ -196,8 +228,8 @@ func createCart(writer http.ResponseWriter, req *http.Request) {
 	_, reply := kvClient.Incr(CART_ID_KEY, 1)
 	cartIdStr := reply.Value
 
-	cartTotalKey, _ := getCartKeys(cartIdStr, token)
-	_, reply = kvClient.Put(cartTotalKey, "0")
+	cartItemNumKey, _ := getCartKeys(cartIdStr, token)
+	_, reply = kvClient.Put(cartItemNumKey, "0")
 
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("{\"cart_id\": \"" + cartIdStr + "\"}"))
@@ -237,24 +269,24 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := AddFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count)
+	flag := addFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count)
 
 	switch flag {
-	case 0:
+	case RET_OK:
 		{
 			writer.WriteHeader(http.StatusNoContent)
 		}
-	case 1:
+	case RET_NOT_FOUND:
 		{
 			writer.WriteHeader(http.StatusNotFound)
 			writer.Write(CART_NOT_FOUND_MSG)
 		}
-	case 2:
+	case RET_NOT_AUTH:
 		{
 			writer.WriteHeader(http.StatusUnauthorized)
 			writer.Write(NOT_AUTHORIZED_CART_MSG)
 		}
-	case 3:
+	case RET_ITEM_OUT_OF_LIMIT:
 		{
 			writer.WriteHeader(http.StatusForbidden)
 			writer.Write(ITEM_OUT_OF_LIMIT_MSG)
@@ -288,7 +320,8 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 		writer.Write(MALFORMED_JSON_MSG)
 		return
 	}
-	cartId := cartIdJson.CartId
+	cartIdStr := cartIdJson.IdStr
+	cartId, _ := strconv.Atoi(cartIdStr)
 
 	if cartId < 1 {
 		writer.WriteHeader(http.StatusNotFound)
@@ -296,7 +329,7 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := SubmitOrderTrans(strconv.Itoa(cartId), token)
+	flag := submitOrderTrans(cartIdStr, token)
 
 	switch flag {
 	case 0:
@@ -333,6 +366,56 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 	return
 }
 
+func payOrder(writer http.ResponseWriter, req *http.Request) {
+	var token string
+	exist, token := authorize(writer, req)
+	if !exist {
+		return
+	}
+
+	isEmpty, body := checkBodyEmpty(writer, req)
+	if isEmpty {
+		return
+	}
+	var orderIdJson OrderIdJson
+	if err := json.Unmarshal(body, &orderIdJson); err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		writer.Write(MALFORMED_JSON_MSG)
+		return
+	}
+	orderIdStr := orderIdJson.IdStr
+
+	flag := payOrderTrans(orderIdStr, token)
+
+	switch flag {
+	case RET_OK:
+		{
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	case RET_NOT_FOUND:
+		{
+			writer.WriteHeader(http.StatusNotFound)
+			writer.Write(ORDER_NOT_FOUND_MSG)
+		}
+	case RET_NOT_AUTH:
+		{
+			writer.WriteHeader(http.StatusUnauthorized)
+			writer.Write(NOT_AUTHORIZED_ORDER_MSG)
+		}
+	case RET_ORDER_PAID:
+		{
+			writer.WriteHeader(http.StatusForbidden)
+			writer.Write(ORDER_PAID_MSG)
+		}
+	case RET_BALANCE_INSUFFICIENT:
+		{
+			writer.WriteHeader(http.StatusForbidden)
+			writer.Write(BALANCE_INSUFFICIENT_MSG)
+		}
+	}
+	return
+}
+
 func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 	var token string
 	exist, token := authorize(writer, req)
@@ -347,7 +430,7 @@ func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 		writer.Write([]byte("[]"))
 		return
 	}
-	cartIdStr := reply.Value
+	hasPaid, cartIdStr, total := parseOrderInfo(reply.Value)
 	_, cartContentKey := getCartKeys(cartIdStr, token)
 
 	var mapReply kvstore.MapReply
@@ -357,8 +440,10 @@ func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 	var orders [1]Order
 	order := &orders[0]
 	itemNum := len(itemIdAndCounts) // it cannot be zero.
-	order.Id = token
+	order.HasPaid = hasPaid
+	order.IdStr = token
 	order.Items = make([]ItemCount, itemNum)
+	order.Total = total
 	cnt := 0
 	for itemIdStr, itemCntStr := range itemIdAndCounts {
 		itemId, _ := strconv.Atoi(itemIdStr)
@@ -366,13 +451,11 @@ func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 		if itemCnt != 0 {
 			order.Items[cnt].ItemId = itemId
 			order.Items[cnt].Count = itemCnt
-			order.TotalPrice += itemCnt * ItemList[itemId].Price
 			cnt++
 		}
 	}
 
 	body, _ := json.Marshal(orders)
-	// fmt.Println(string(body))
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(body)
 }
@@ -398,17 +481,21 @@ func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
 	orders := make([]OrderDetail, len(ordersMap))
 	cnt := 0
 
-	for orderIdStr, cartIdStr := range ordersMap {
+	for orderIdStr, orderInfo := range ordersMap {
 		userToken := orderIdStr
+		hasPaid, cartIdStr, total := parseOrderInfo(orderInfo)
 
 		_, cartContentKey := getCartKeys(cartIdStr, userToken)
 		_, mapReply = kvClient.HGetAll(cartContentKey)
 		itemIdAndCounts := mapReply.Value
 
 		itemNum := len(itemIdAndCounts) // it cannot be zero.
-		orders[cnt].Id = orderIdStr
+		orders[cnt].IdStr = orderIdStr
 		orders[cnt].UserId = token2UserId(userToken)
 		orders[cnt].Items = make([]ItemCount, itemNum)
+		orders[cnt].Total = total
+		orders[cnt].HasPaid = hasPaid
+
 		cnt2 := 0
 		for itemIdStr, itemCntStr := range itemIdAndCounts {
 			itemId, _ := strconv.Atoi(itemIdStr)
@@ -416,7 +503,6 @@ func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
 			if itemCnt != 0 {
 				orders[cnt].Items[cnt2].ItemId = itemId
 				orders[cnt].Items[cnt2].Count = itemCnt
-				orders[cnt].TotalPrice += itemCnt * ItemList[itemId].Price
 				cnt2++
 			}
 		}
@@ -484,9 +570,9 @@ func checkBodyEmpty(writer http.ResponseWriter, req *http.Request) (bool, []byte
 	}
 }
 
-// Retrun the total-key and content-key in kvstore.
-func getCartKeys(cartIdStr, token string) (cartTotalKey, cartContentKey string) {
-	cartTotalKey = "cart:" + cartIdStr + ":" + token + ":total"
+// Retrun the item-num-key and content-key in kvstore.
+func getCartKeys(cartIdStr, token string) (cartItemNumKey, cartContentKey string) {
+	cartItemNumKey = "cart:" + cartIdStr + ":" + token + ":num"
 	cartContentKey = "cart:" + cartIdStr + ":" + token
 	return
 }
@@ -501,4 +587,28 @@ func token2UserId(token string) int {
 	} else {
 		panic(err)
 	}
+}
+
+func composeOrderInfo(hasPaid bool, cartIdStr string, total int) string {
+	var info [3]string
+	if hasPaid {
+		info[0] = ORDER_PAID_FLAG
+	} else {
+		info[0] = ORDER_UNPAID_FLAG
+	}
+	info[1] = cartIdStr
+	info[2] = strconv.Itoa(total)
+	return strings.Join(info[:], ",")
+}
+
+func parseOrderInfo(orderInfo string) (hasPaid bool, cartIdStr string, total int) {
+	info := strings.Split(orderInfo, ",")
+	if info[0] == ORDER_PAID_FLAG {
+		hasPaid = true
+	} else {
+		hasPaid = false
+	}
+	cartIdStr = info[1]
+	total, _ = strconv.Atoi(info[2])
+	return
 }
