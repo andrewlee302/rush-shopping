@@ -5,15 +5,26 @@ import (
 	"net"
 	"net/rpc"
 	"syscall"
-	"time"
 )
 
 type Client struct {
-	SrvAddr string
+	SrvAddr   string
+	rpcClient *rpc.Client
 }
 
 func NewClient(srvAddr string) *Client {
-	return &Client{SrvAddr: srvAddr}
+	rpcClient, err := rpc.Dial("tcp", srvAddr)
+	if err != nil {
+		err1 := err.(*net.OpError)
+		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
+			fmt.Printf("TinyStore Dial() failed: %v\n", err1)
+		}
+		return nil
+	}
+	return &Client{SrvAddr: srvAddr, rpcClient: rpcClient}
+}
+func (c *Client) Close() {
+	c.rpcClient.Close()
 }
 
 func (c *Client) HSet(key, field, value string) (ok bool, reply Reply) {
@@ -82,22 +93,8 @@ func (c *Client) CompareAndIncr(key string, base, diff int, compareOp func(int, 
 	return
 }
 
-var DailCost int64 = 0
-
 func (c *Client) call(name string, args interface{}, reply interface{}) bool {
-	start := time.Now()
-	rpcClient, err := rpc.Dial("tcp", c.SrvAddr)
-	DailCost += time.Since(start).Nanoseconds()
-	if err != nil {
-		err1 := err.(*net.OpError)
-		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
-			fmt.Printf("TinyStore Dial() failed: %v\n", err1)
-		}
-		return false
-	}
-	defer rpcClient.Close()
-
-	err = rpcClient.Call(name, args, reply)
+	err := c.rpcClient.Call(name, args, reply)
 	if err == nil {
 		return true
 	}

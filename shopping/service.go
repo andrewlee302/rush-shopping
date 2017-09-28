@@ -10,6 +10,7 @@ import (
 	"rush-shopping/kvstore"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,14 +71,18 @@ var (
 )
 
 var (
-	server    *http.ServeMux
-	kvClient  *kvstore.Client
-	rootToken string
+	server       *http.ServeMux
+	rootToken    string
+	kvClientPool *sync.Pool
 )
 
 func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) {
-	kvClient = kvstore.NewClient(kvstoreAddr)
-
+	kvClientPool = &sync.Pool{
+		New: func() interface{} {
+			log.Println("New client")
+			return kvstore.NewClient(kvstoreAddr)
+		},
+	}
 	loadUsersAndItems(userCsv, itemCsv)
 	return
 
@@ -101,6 +106,9 @@ func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) {
 func loadUsersAndItems(userCsv, itemCsv string) {
 	log.Println("Load user and item data to kvstore")
 	defer log.Println("Finished data loading")
+
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
 
 	kvClient.Put(CART_ID_KEY, "0")
 
@@ -129,7 +137,6 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 
 	// read items
 	itemCnt := 0
-	cost := int64(0)
 	if file, err := os.Open(itemCsv); err == nil {
 		reader := csv.NewReader(file)
 		for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
@@ -139,9 +146,7 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 			stock, _ := strconv.Atoi(strs[2])
 			ItemList = append(ItemList, Item{Id: itemId, Price: price, Stock: stock})
 
-			start := time.Now()
 			kvClient.HSet(ITEMS_KEY, strs[0], strs[2])
-			cost += time.Since(start).Nanoseconds()
 
 			if itemId > MaxItemID {
 				MaxItemID = itemId
@@ -152,9 +157,6 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 	} else {
 		panic(err.Error())
 	}
-	fmt.Println(float64(cost) / 1000000000.0)
-	fmt.Println(float64(kvstore.HSetCost) / 1000000000.0)
-	fmt.Println(float64(kvstore.DailCost) / 1000000000.0)
 
 	// check hget and hset in kvstore
 	// if file, err := os.Open(itemCsv); err == nil {
@@ -179,6 +181,7 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 }
 
 func login(writer http.ResponseWriter, req *http.Request) {
+
 	isEmpty, body := checkBodyEmpty(writer, req)
 	if isEmpty {
 		return
@@ -195,6 +198,9 @@ func login(writer http.ResponseWriter, req *http.Request) {
 		writer.Write(USER_AUTH_FAIL_MSG)
 		return
 	}
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	userId := userIdAndPass.Id
 	token := userId2Token(userId)
 	kvClient.SAdd("tokens", token)
@@ -204,7 +210,10 @@ func login(writer http.ResponseWriter, req *http.Request) {
 }
 
 func queryFood(writer http.ResponseWriter, req *http.Request) {
-	if exist, _ := authorize(writer, req); !exist {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
+	if exist, _ := authorize(writer, req, kvClient); !exist {
 		return
 	}
 	_, mapReply := kvClient.HGetAll(ITEMS_KEY)
@@ -219,8 +228,11 @@ func queryFood(writer http.ResponseWriter, req *http.Request) {
 }
 
 func createCart(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	var token string
-	exist, token := authorize(writer, req)
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -233,11 +245,15 @@ func createCart(writer http.ResponseWriter, req *http.Request) {
 
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("{\"cart_id\": \"" + cartIdStr + "\"}"))
+	return
 }
 
 func addFood(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	var token string
-	exist, token := authorize(writer, req)
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -269,7 +285,7 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := addFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count)
+	flag := addFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count, kvClient)
 
 	switch flag {
 	case RET_OK:
@@ -304,8 +320,11 @@ func orderProcess(writer http.ResponseWriter, req *http.Request) {
 }
 
 func submitOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	var token string
-	exist, token := authorize(writer, req)
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -329,7 +348,7 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := submitOrderTrans(cartIdStr, token)
+	flag := submitOrderTrans(cartIdStr, token, kvClient)
 
 	switch flag {
 	case 0:
@@ -367,8 +386,11 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 }
 
 func payOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
 	var token string
-	exist, token := authorize(writer, req)
+
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -385,7 +407,7 @@ func payOrder(writer http.ResponseWriter, req *http.Request) {
 	}
 	orderIdStr := orderIdJson.IdStr
 
-	flag := payOrderTrans(orderIdStr, token)
+	flag := payOrderTrans(orderIdStr, token, kvClient)
 
 	switch flag {
 	case RET_OK:
@@ -417,8 +439,11 @@ func payOrder(writer http.ResponseWriter, req *http.Request) {
 }
 
 func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	var token string
-	exist, token := authorize(writer, req)
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -458,11 +483,15 @@ func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 	body, _ := json.Marshal(orders)
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(body)
+	return
 }
 
 func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
+	kvClient := kvClientPool.Get().(*kvstore.Client)
+	defer kvClientPool.Put(kvClient)
+
 	var token string
-	exist, token := authorize(writer, req)
+	exist, token := authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -514,11 +543,12 @@ func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
 	writer.Write(body)
 	end := time.Now().Sub(start)
 	fmt.Println("queryAllOrders time: ", end.String())
+	return
 }
 
 // Every action will do authorization except logining.
 // @return the flag that indicate whether is authroized or not
-func authorize(writer http.ResponseWriter, req *http.Request) (bool, string) {
+func authorize(writer http.ResponseWriter, req *http.Request, kvClient *kvstore.Client) (bool, string) {
 	req.ParseForm()
 	token := req.Form.Get("access_token")
 	if token == "" {

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/rpc"
 	"strconv"
-	"time"
 )
 
 type TinyStore struct {
@@ -44,10 +43,7 @@ func StartTinyStore(addr string) *TinyStore {
 }
 
 // Set the field of the specific hashmap.
-var HSetCost int64 = 0
-
 func (ts *TinyStore) HSet(args *HSetArgs, reply *Reply) error {
-	start := time.Now()
 	// log.Println("hset")
 	hashmap, ok := ts.hashdata[args.Key]
 	if !ok {
@@ -57,7 +53,6 @@ func (ts *TinyStore) HSet(args *HSetArgs, reply *Reply) error {
 	_, ok = hashmap[args.Field]
 	hashmap[args.Field] = args.Value
 	reply.Flag, reply.Value = ok, args.Value
-	HSetCost += time.Since(start).Nanoseconds()
 	return nil
 }
 
