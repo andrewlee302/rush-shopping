@@ -2,6 +2,8 @@ package kvstore
 
 import (
 	"runtime"
+	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -32,11 +34,13 @@ func checkCall(t *testing.T, ok bool, reply, expected Reply) {
 }
 
 func TestBasic(t *testing.T) {
-	runtime.GOMAXPROCS(4)
 
-	srvAddr := "localhost:9090"
-	StartTinyStore(srvAddr)
+	srvAddr := "localhost:9091"
+	ts := StartTinyStore(srvAddr)
+	defer ts.Kill()
+
 	client := NewClient(srvAddr)
+
 	ok, reply := client.Get("key1")
 	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
 
@@ -75,4 +79,124 @@ func TestBasic(t *testing.T) {
 
 	ok, mapReply := client.HGetAll("hash1")
 	checkMapCall(t, ok, mapReply, MapReply{Flag: true, Value: map[string]string{"key1": "3", "key2": "10"}})
+}
+
+func TestConcurrent(t *testing.T) {
+	runtime.GOMAXPROCS(4)
+
+	srvAddr := "localhost:9090"
+	ts := StartTinyStore(srvAddr)
+	defer ts.Kill()
+	// StartTinyStore(srvAddr)
+
+	client := NewClient(srvAddr)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ok, reply := client.Put("key"+strconv.Itoa(i), "1")
+			checkCall(t, ok, reply, Reply{Flag: false, Value: "1"})
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ok, reply := client.Get("key" + strconv.Itoa(i))
+			checkCall(t, ok, reply, Reply{Flag: true, Value: "1"})
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 1000; j++ {
+			wg.Add(2)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.SAdd("set"+strconv.Itoa(i), "member"+strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+			}(i, j)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.HSet("hash"+strconv.Itoa(i), "field"+strconv.Itoa(j), strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: false, Value: strconv.Itoa(j)})
+			}(i, j)
+		}
+	}
+	wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 1000; j++ {
+			wg.Add(2)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.SIsMember("set"+strconv.Itoa(i), "member"+strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: true, Value: ""})
+			}(i, j)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.HGet("hash"+strconv.Itoa(i), "field"+strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: true, Value: strconv.Itoa(j)})
+			}(i, j)
+		}
+	}
+	wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		for j := 1000; j < 2000; j++ {
+			wg.Add(2)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.SIsMember("set"+strconv.Itoa(i), "member"+strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+			}(i, j)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.HGet("hash"+strconv.Itoa(i), "field"+strconv.Itoa(j))
+				checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+			}(i, j)
+		}
+	}
+	wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		for j := 0; j < 1000; j++ {
+			wg.Add(1)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.HIncr("hash"+strconv.Itoa(i), "field"+strconv.Itoa(j), j)
+				checkCall(t, ok, reply, Reply{Flag: true, Value: strconv.Itoa(j * 2)})
+			}(i, j)
+		}
+		for j := 1000; j < 2000; j++ {
+			wg.Add(1)
+			go func(i, j int) {
+				defer wg.Done()
+				ok, reply := client.HIncr("hash"+strconv.Itoa(i), "field"+strconv.Itoa(j), j)
+				checkCall(t, ok, reply, Reply{Flag: false, Value: strconv.Itoa(j)})
+			}(i, j)
+		}
+	}
+	wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ok, mapReply := client.HGetAll("hash" + strconv.Itoa(i))
+			expectedMapValue := make(map[string]string)
+			for j := 0; j < 1000; j++ {
+				expectedMapValue["field"+strconv.Itoa(j)] = strconv.Itoa(j * 2)
+			}
+			for j := 1000; j < 2000; j++ {
+				expectedMapValue["field"+strconv.Itoa(j)] = strconv.Itoa(j)
+			}
+			checkMapCall(t, ok, mapReply, MapReply{Flag: true, Value: expectedMapValue})
+		}(i)
+	}
+	wg.Wait()
 }

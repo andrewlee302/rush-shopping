@@ -5,16 +5,8 @@ import (
 	"strconv"
 )
 
-// resident memory
-var (
-	ItemList  []Item                   // real item start from index 1
-	UserMap   map[string]UserIdAndPass // map[name]password
-	MaxItemID int
-	MaxUserID int
-)
-
 // transaction problem
-func addFoodTrans(cartIdStr, userToken, itemIdStr string, itemCnt int, kvClient *kvstore.Client) int {
+func (ss *ShopServer) addFoodTrans(cartIdStr, userToken, itemIdStr string, itemCnt int, kvClient *kvstore.Client) int {
 	cartId, _ := strconv.Atoi(cartIdStr)
 	cartItemNumKey, cartContentKey := getCartKeys(cartIdStr, userToken)
 	var reply kvstore.Reply
@@ -44,7 +36,7 @@ func addFoodTrans(cartIdStr, userToken, itemIdStr string, itemCnt int, kvClient 
 }
 
 // transaction problem
-func submitOrderTrans(cartIdStr, userToken string, kvClient *kvstore.Client) int {
+func (ss *ShopServer) submitOrderTrans(cartIdStr, userToken string, kvClient *kvstore.Client) int {
 	cartId, _ := strconv.Atoi(cartIdStr)
 	cartItemNumKey, cartContentKey := getCartKeys(cartIdStr, userToken)
 	var reply kvstore.Reply
@@ -80,7 +72,7 @@ func submitOrderTrans(cartIdStr, userToken string, kvClient *kvstore.Client) int
 		stock, _ := strconv.Atoi(reply1.Value)
 		itemId, _ := strconv.Atoi(itemIdStr)
 		itemCnt, _ := strconv.Atoi(itemCntStr)
-		total += itemCnt * ItemList[itemId].Price
+		total += itemCnt * ss.ItemList[itemId].Price
 		if stock < itemCnt {
 			return RET_OUT_OF_STOCK
 		}
@@ -100,7 +92,7 @@ func submitOrderTrans(cartIdStr, userToken string, kvClient *kvstore.Client) int
 }
 
 // transaction problem
-func payOrderTrans(orderIdStr, userToken string, kvClient *kvstore.Client) int {
+func (ss *ShopServer) payOrderTrans(orderIdStr, userToken string, kvClient *kvstore.Client) int {
 	var reply kvstore.Reply
 
 	// Test whether the order exists, or it belongs other users.

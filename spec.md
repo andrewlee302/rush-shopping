@@ -238,7 +238,7 @@ POST /orders?access_token=xxx
 ```
 200 OK
 {
-    "id ": "someorderid"
+    "order_id ": "someorderid"
 }
 ```
 

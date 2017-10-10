@@ -8,7 +8,7 @@ import sys
 USER_CSV = "data/users.csv"
 ITEM_CSV = "data/items.csv"
 INIT_ROOT_MONEY = 0
-INIT_MONEY = 200
+INIT_MONEY = 1000
 NUM_USERS = 2000
 NUM_ITEMS = 2000
 
@@ -33,5 +33,6 @@ print "Generate %d items -> %s" %(NUM_ITEMS, ITEM_CSV)
 with open(ITEM_CSV, 'w') as f:
     for i in range(1, NUM_ITEMS+1):
         price = random.randint(1,101)
-        count = random.randint(1,21) * 5
+        # count = random.randint(1,21) * 5
+        count = random.randint(1,21) * 20
         f.write("%d,%d,%d\n" % (i, price, count))

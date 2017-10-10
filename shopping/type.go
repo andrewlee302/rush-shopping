@@ -25,7 +25,7 @@ type Order struct {
 }
 
 type ItemCount struct {
-	ItemId int `json:"food_id"`
+	ItemId int `json:"item_id"`
 	Count  int `json:"count"`
 }
 

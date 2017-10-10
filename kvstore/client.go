@@ -1,7 +1,10 @@
 package kvstore
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
+	"log"
 	"net"
 	"net/rpc"
 	"syscall"
@@ -41,7 +44,14 @@ func (c *Client) HGet(key, field string) (ok bool, reply Reply) {
 
 func (c *Client) HGetAll(key string) (ok bool, reply MapReply) {
 	args := &HGetAllArgs{Key: key}
-	ok = c.call("TinyStore.HGetAll", args, &reply)
+	replyBinary := &MapReplyBinary{}
+	ok = c.call("TinyStore.HGetAll", args, &replyBinary)
+	buf := bytes.NewReader(replyBinary.Value)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&reply.Value); err != nil {
+		log.Fatal("decoder error:", err)
+	}
+	reply.Flag = replyBinary.Flag
 	return
 }
 

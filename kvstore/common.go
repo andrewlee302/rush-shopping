@@ -61,6 +61,11 @@ type MapReply struct {
 	Value map[string]string
 }
 
+type MapReplyBinary struct {
+	Flag  bool
+	Value []byte // hashmap binary encoded by gob
+}
+
 type Reply struct {
 	Flag  bool
 	Value string

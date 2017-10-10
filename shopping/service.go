@@ -20,6 +20,7 @@ const (
 	CREATE_CART           = "/carts"
 	Add_ITEM              = "/carts/"
 	SUBMIT_OR_QUERY_ORDER = "/orders"
+	PAY_ORDER             = "/pay"
 	QUERY_ALL_ORDERS      = "/admin/orders"
 )
 
@@ -70,62 +71,87 @@ var (
 	BALANCE_INSUFFICIENT_MSG = []byte("{\"code\": \"BALANCE_INSUFFICIENT\",\"message\": \"余额不足\"}")
 )
 
-var (
-	server       *http.ServeMux
+type ShopServer struct {
+	server       *http.Server
+	handler      *http.Handler
 	rootToken    string
 	kvClientPool *sync.Pool
-)
 
-func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) {
-	kvClientPool = &sync.Pool{
+	// resident memory
+	ItemList  []Item // real item start from index 1
+	ItemLock  sync.Mutex
+	UserMap   map[string]UserIdAndPass // map[name]password
+	MaxItemID int
+	MaxUserID int
+}
+
+func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) *ShopServer {
+	ss := new(ShopServer)
+	ss.kvClientPool = &sync.Pool{
 		New: func() interface{} {
-			log.Println("New client")
+			// log.Println("New client")
 			return kvstore.NewClient(kvstoreAddr)
 		},
 	}
-	loadUsersAndItems(userCsv, itemCsv)
-	return
+	ss.loadUsersAndItems(userCsv, itemCsv)
 
-	server = http.NewServeMux()
-	server.HandleFunc(LOGIN, login)
-	server.HandleFunc(QUERY_ITEM, queryFood)
-	server.HandleFunc(CREATE_CART, createCart)
-	server.HandleFunc(Add_ITEM, addFood)
-	server.HandleFunc(SUBMIT_OR_QUERY_ORDER, orderProcess)
-	server.HandleFunc(QUERY_ALL_ORDERS, queryAllOrders)
+	handler := http.NewServeMux()
+	ss.server = &http.Server{
+		Addr:    appAddr,
+		Handler: handler,
+		// ReadTimeout:    10 * time.Second,
+		// WriteTimeout:   10 * time.Second,
+		// MaxHeaderBytes: 1 << 20,
+	}
+	handler.HandleFunc(LOGIN, ss.login)
+	handler.HandleFunc(QUERY_ITEM, ss.queryFood)
+	handler.HandleFunc(CREATE_CART, ss.createCart)
+	handler.HandleFunc(Add_ITEM, ss.addFood)
+	handler.HandleFunc(SUBMIT_OR_QUERY_ORDER, ss.orderProcess)
+	handler.HandleFunc(PAY_ORDER, ss.payOrder)
+	handler.HandleFunc(QUERY_ALL_ORDERS, ss.queryAllOrders)
 	log.Printf("Start shopping service on %s\n", appAddr)
-	defer log.Println("Closed shopping service")
-	if err := http.ListenAndServe(appAddr, server); err != nil {
-		fmt.Println(err)
+	go func() {
+		if err := ss.server.ListenAndServe(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+	return ss
+}
+
+func (ss *ShopServer) Kill() {
+	log.Println("Kill the http server")
+	if err := ss.server.Close(); err != nil {
+		log.Fatal("Http server close error:", err)
 	}
 }
 
 /**
  * Load user and item data to kvstore.
  */
-func loadUsersAndItems(userCsv, itemCsv string) {
+func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 	log.Println("Load user and item data to kvstore")
 	defer log.Println("Finished data loading")
 
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	kvClient.Put(CART_ID_KEY, "0")
 
-	ItemList = make([]Item, 1, 512)
-	ItemList[0] = Item{Id: 0}
+	ss.ItemList = make([]Item, 1, 512)
+	ss.ItemList[0] = Item{Id: 0}
 
-	UserMap = make(map[string]UserIdAndPass)
+	ss.UserMap = make(map[string]UserIdAndPass)
 
 	// read users
 	if file, err := os.Open(userCsv); err == nil {
 		reader := csv.NewReader(file)
 		for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
 			userId, _ := strconv.Atoi(strs[0])
-			UserMap[strs[1]] = UserIdAndPass{userId, strs[2]}
+			ss.UserMap[strs[1]] = UserIdAndPass{userId, strs[2]}
 			kvClient.HSet(BALANCE_KEY, userId2Token(userId), strs[3])
-			if userId > MaxUserID {
-				MaxUserID = userId
+			if userId > ss.MaxUserID {
+				ss.MaxUserID = userId
 			}
 		}
 		file.Close()
@@ -133,7 +159,7 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 		panic(err.Error())
 	}
 
-	rootToken = userId2Token(UserMap["root"].Id)
+	ss.rootToken = userId2Token(ss.UserMap["root"].Id)
 
 	// read items
 	itemCnt := 0
@@ -144,12 +170,12 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 			itemId, _ := strconv.Atoi(strs[0])
 			price, _ := strconv.Atoi(strs[1])
 			stock, _ := strconv.Atoi(strs[2])
-			ItemList = append(ItemList, Item{Id: itemId, Price: price, Stock: stock})
+			ss.ItemList = append(ss.ItemList, Item{Id: itemId, Price: price, Stock: stock})
 
 			kvClient.HSet(ITEMS_KEY, strs[0], strs[2])
 
-			if itemId > MaxItemID {
-				MaxItemID = itemId
+			if itemId > ss.MaxItemID {
+				ss.MaxItemID = itemId
 			}
 		}
 
@@ -180,7 +206,7 @@ func loadUsersAndItems(userCsv, itemCsv string) {
 	// }
 }
 
-func login(writer http.ResponseWriter, req *http.Request) {
+func (ss *ShopServer) login(writer http.ResponseWriter, req *http.Request) {
 
 	isEmpty, body := checkBodyEmpty(writer, req)
 	if isEmpty {
@@ -192,14 +218,14 @@ func login(writer http.ResponseWriter, req *http.Request) {
 		writer.Write(MALFORMED_JSON_MSG)
 		return
 	}
-	userIdAndPass, ok := UserMap[user.Username]
+	userIdAndPass, ok := ss.UserMap[user.Username]
 	if !ok || userIdAndPass.Password != user.Password {
 		writer.WriteHeader(http.StatusForbidden)
 		writer.Write(USER_AUTH_FAIL_MSG)
 		return
 	}
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	userId := userIdAndPass.Id
 	token := userId2Token(userId)
@@ -207,32 +233,38 @@ func login(writer http.ResponseWriter, req *http.Request) {
 	okMsg := []byte("{\"user_id\":" + strconv.Itoa(userId) + ",\"username\":\"" + user.Username + "\",\"access_token\":\"" + token + "\"}")
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(okMsg)
+	// fmt.Println("login", user, string(okMsg))
 }
 
-func queryFood(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) queryFood(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
-	if exist, _ := authorize(writer, req, kvClient); !exist {
+	if exist, _ := ss.authorize(writer, req, kvClient); !exist {
 		return
 	}
 	_, mapReply := kvClient.HGetAll(ITEMS_KEY)
 	items := mapReply.Value
-	for i := 1; i < len(ItemList); i++ {
-		ItemList[i].Stock, _ = strconv.Atoi(items[strconv.Itoa(ItemList[i].Id)])
+	// TODO data race
+	ss.ItemLock.Lock()
+	for i := 1; i < len(ss.ItemList); i++ {
+		ss.ItemList[i].Stock, _ = strconv.Atoi(items[strconv.Itoa(ss.ItemList[i].Id)])
 	}
 	itemsJson := make([]byte, 3370)
-	itemsJson, _ = json.Marshal(ItemList[1:])
+	itemsJson, _ = json.Marshal(ss.ItemList[1:])
+	ss.ItemLock.Unlock()
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(itemsJson)
+	// fmt.Println("queryFood")
+	return
 }
 
-func createCart(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) createCart(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	var token string
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -245,15 +277,16 @@ func createCart(writer http.ResponseWriter, req *http.Request) {
 
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("{\"cart_id\": \"" + cartIdStr + "\"}"))
+	// fmt.Println("craeteCart", cartIdStr)
 	return
 }
 
-func addFood(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) addFood(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	var token string
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -263,6 +296,7 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// fmt.Println(string(body))
 	var item ItemCount
 	if err := json.Unmarshal(body, &item); err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
@@ -270,7 +304,7 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if item.ItemId < 1 || item.ItemId > MaxItemID {
+	if item.ItemId < 1 || item.ItemId > ss.MaxItemID {
 		writer.WriteHeader(http.StatusNotFound)
 		writer.Write(ITEM_NOT_FOUND_MSG)
 		return
@@ -285,7 +319,8 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := addFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count, kvClient)
+	// fmt.Println("addFoodTrans")
+	flag := ss.addFoodTrans(cartIdStr, token, strconv.Itoa(item.ItemId), item.Count, kvClient)
 
 	switch flag {
 	case RET_OK:
@@ -294,6 +329,7 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 		}
 	case RET_NOT_FOUND:
 		{
+			// fmt.Println("NOT_FOUND")
 			writer.WriteHeader(http.StatusNotFound)
 			writer.Write(CART_NOT_FOUND_MSG)
 		}
@@ -308,23 +344,26 @@ func addFood(writer http.ResponseWriter, req *http.Request) {
 			writer.Write(ITEM_OUT_OF_LIMIT_MSG)
 		}
 	}
+	// fmt.Println("addItem", flag)
 	return
 }
 
-func orderProcess(writer http.ResponseWriter, req *http.Request) {
+func (ss *ShopServer) orderProcess(writer http.ResponseWriter, req *http.Request) {
 	if req.Method == "POST" {
-		submitOrder(writer, req)
+		ss.submitOrder(writer, req)
+		// fmt.Println("submitOrder")
 	} else {
-		queryOneOrder(writer, req)
+		ss.queryOneOrder(writer, req)
+		// fmt.Println("queryOneOrder")
 	}
 }
 
-func submitOrder(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) submitOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	var token string
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -348,13 +387,13 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	flag := submitOrderTrans(cartIdStr, token, kvClient)
+	flag := ss.submitOrderTrans(cartIdStr, token, kvClient)
 
 	switch flag {
 	case 0:
 		{
 			writer.WriteHeader(http.StatusOK)
-			writer.Write([]byte("{\"id\": \"" + token + "\"}"))
+			writer.Write([]byte("{\"order_id\": \"" + token + "\"}"))
 		}
 	case 1:
 		{
@@ -363,34 +402,39 @@ func submitOrder(writer http.ResponseWriter, req *http.Request) {
 		}
 	case 2:
 		{
+			fmt.Println(string(NOT_AUTHORIZED_CART_MSG))
 			writer.WriteHeader(http.StatusUnauthorized)
 			writer.Write(NOT_AUTHORIZED_CART_MSG)
 		}
 	case 3:
 		{
+			fmt.Println(string(CART_EMPTY))
 			writer.WriteHeader(http.StatusForbidden)
 			writer.Write(CART_EMPTY)
 		}
 	case 4:
 		{
+			fmt.Println(string(ITEM_OUT_OF_STOCK_MSG))
 			writer.WriteHeader(http.StatusForbidden)
 			writer.Write(ITEM_OUT_OF_STOCK_MSG)
 		}
 	case 5:
 		{
+			fmt.Println(string(ORDER_OUT_OF_LIMIT_MSG))
 			writer.WriteHeader(http.StatusForbidden)
 			writer.Write(ORDER_OUT_OF_LIMIT_MSG)
 		}
 	}
+	// fmt.Println("submitOrder", flag)
 	return
 }
 
-func payOrder(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) payOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 	var token string
 
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -407,7 +451,7 @@ func payOrder(writer http.ResponseWriter, req *http.Request) {
 	}
 	orderIdStr := orderIdJson.IdStr
 
-	flag := payOrderTrans(orderIdStr, token, kvClient)
+	flag := ss.payOrderTrans(orderIdStr, token, kvClient)
 
 	switch flag {
 	case RET_OK:
@@ -435,15 +479,16 @@ func payOrder(writer http.ResponseWriter, req *http.Request) {
 			writer.Write(BALANCE_INSUFFICIENT_MSG)
 		}
 	}
+	// fmt.Println("payOrder", flag)
 	return
 }
 
-func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) queryOneOrder(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	var token string
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
@@ -486,19 +531,19 @@ func queryOneOrder(writer http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
-	kvClient := kvClientPool.Get().(*kvstore.Client)
-	defer kvClientPool.Put(kvClient)
+func (ss *ShopServer) queryAllOrders(writer http.ResponseWriter, req *http.Request) {
+	kvClient := ss.kvClientPool.Get().(*kvstore.Client)
+	defer ss.kvClientPool.Put(kvClient)
 
 	var token string
-	exist, token := authorize(writer, req, kvClient)
+	exist, token := ss.authorize(writer, req, kvClient)
 	if !exist {
 		return
 	}
 
 	start := time.Now()
 
-	if token != rootToken {
+	if token != ss.rootToken {
 		writer.WriteHeader(http.StatusUnauthorized)
 		writer.Write(INVALID_ACCESS_TOKEN_MSG)
 		return
@@ -548,7 +593,7 @@ func queryAllOrders(writer http.ResponseWriter, req *http.Request) {
 
 // Every action will do authorization except logining.
 // @return the flag that indicate whether is authroized or not
-func authorize(writer http.ResponseWriter, req *http.Request, kvClient *kvstore.Client) (bool, string) {
+func (ss *ShopServer) authorize(writer http.ResponseWriter, req *http.Request, kvClient *kvstore.Client) (bool, string) {
 	req.ParseForm()
 	token := req.Form.Get("access_token")
 	if token == "" {
@@ -558,7 +603,7 @@ func authorize(writer http.ResponseWriter, req *http.Request, kvClient *kvstore.
 	authUserId := token2UserId(token)
 	authUserIdStr := strconv.Itoa(authUserId)
 
-	if authUserId < 1 || authUserId > MaxUserID {
+	if authUserId < 1 || authUserId > ss.MaxUserID {
 		writer.WriteHeader(http.StatusUnauthorized)
 		writer.Write(INVALID_ACCESS_TOKEN_MSG)
 		return false, ""
