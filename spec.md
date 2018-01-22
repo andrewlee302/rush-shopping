@@ -11,7 +11,7 @@
 1. <a href="#orders">查询订单</a>
 1. <a href="#admin-orders">后台接口－查询订单</a>
 
-除登录接口外，其他接口需要传入登录接口得到的 access_token，access_token 无效或者为空会直接返回401异常：
+除登录接口外，其他接口需要传入登录接口得到的access_token，access_token无效或者为空会直接返回401异常：
 
 ```
 401 Unauthorized
@@ -21,9 +21,9 @@
 }
 ```
 
-其中后台接口只有用 root 用户登录后的 access_token 才能访问。
+其中后台接口只有用root用户登录后的access_token才能访问；非后台接口root用户无法访问。
 
-其中 access_token 需要支持： parameter 和 http header 两种认证方式。客户端提供其中一个即可通过认证。
+其中access_token需要支持：parameter和http header两种认证方式。客户端提供其中一个即可通过认证。
 
 ```
 # by parameter
@@ -34,7 +34,7 @@ GET /items Access-Token:xxx
 ```
 
 
-如果需要传参的接口，传过来的 body 为空。则返回400异常:
+如果需要传参的接口，传过来的body为空。则返回400异常:
 
 ```
 400 Bad Request
@@ -44,7 +44,7 @@ GET /items Access-Token:xxx
 }
 ```
 
-如果需要传参的接口，传过来的请求体 json 格式有误。则返回 400 异常:
+如果需要传参的接口，传过来的请求体json格式有误。则返回400异常:
 
 ```
 400 Bad Request
@@ -217,6 +217,7 @@ PATCH /carts/e0c68eb96bd8495dbb8fcd8e86fc48a3?access_token=xxx
 ## 下单
 
 `POST /orders`
+下单成功后，购物车将会释放。
 
 ##### 请求体
 

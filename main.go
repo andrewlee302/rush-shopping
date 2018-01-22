@@ -24,7 +24,6 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
-	"rush-shopping/kvstore"
 	"rush-shopping/shopping"
 )
 
@@ -58,6 +57,10 @@ func main() {
 	userCsv := os.Getenv("USER_CSV")
 	itemCsv := os.Getenv("ITEM_CSV")
 
-	kvstore.StartTinyStore(kvstoreAddr)
+	ks := shopping.StartTransKVStore(kvstoreAddr)
+	fmt.Println("here1")
+	ks.Serve()
 	shopping.InitService(appAddr, kvstoreAddr, userCsv, itemCsv)
+	block := make(chan bool)
+	<-block
 }

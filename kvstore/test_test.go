@@ -34,7 +34,6 @@ func checkCall(t *testing.T, ok bool, reply, expected Reply) {
 }
 
 func TestBasic(t *testing.T) {
-
 	srvAddr := "localhost:9091"
 	ts := StartTinyStore(srvAddr)
 	defer ts.Kill()
@@ -50,6 +49,10 @@ func TestBasic(t *testing.T) {
 	ok, reply = client.Get("key1")
 	checkCall(t, ok, reply, Reply{Flag: true, Value: "1"})
 
+	ok = client.Del("key1")
+	ok, reply = client.Get("key1")
+	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+
 	ok, reply = client.SIsMember("set1", "key1")
 	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
 
@@ -59,6 +62,10 @@ func TestBasic(t *testing.T) {
 	ok, reply = client.SIsMember("set1", "key1")
 	checkCall(t, ok, reply, Reply{Flag: true, Value: ""})
 
+	ok, reply = client.SIsMember("set1", "key2")
+	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+
+	ok = client.SDel("set1")
 	ok, reply = client.SIsMember("set1", "key2")
 	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
 
@@ -79,6 +86,14 @@ func TestBasic(t *testing.T) {
 
 	ok, mapReply := client.HGetAll("hash1")
 	checkMapCall(t, ok, mapReply, MapReply{Flag: true, Value: map[string]string{"key1": "3", "key2": "10"}})
+
+	ok = client.HDel("hash1", "key1")
+	ok, reply = client.HGet("hash1", "key1")
+	checkCall(t, ok, reply, Reply{Flag: false, Value: ""})
+
+	ok = client.HDelAll("hash1")
+	ok, mapReply = client.HGetAll("hash1")
+	checkMapCall(t, ok, mapReply, MapReply{Flag: false, Value: nil})
 }
 
 func TestConcurrent(t *testing.T) {

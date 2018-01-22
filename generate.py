@@ -22,17 +22,17 @@ elif not os.path.isdir("data"):
 print "Generate %d users -> %s" %(NUM_USERS, USER_CSV)
 with open(USER_CSV, 'w') as f:
     # root
-    f.write("%d,%s,%d,%d\n" % (0, "root", 0, INIT_ROOT_MONEY))
+    f.write("%d,%s,%s,%d\n" % (0, "root", "root", INIT_ROOT_MONEY))
     for i in range(1, NUM_USERS):
         name = "andrew%d" %i
-        password = i
-        f.write("%d,%s,%d,%d\n" % (i, name, password, INIT_MONEY))
+        password = name
+        f.write("%d,%s,%s,%d\n" % (i, name, password, INIT_MONEY))
 
 # Id for items starts from 1.
 print "Generate %d items -> %s" %(NUM_ITEMS, ITEM_CSV)
 with open(ITEM_CSV, 'w') as f:
     for i in range(1, NUM_ITEMS+1):
         price = random.randint(1,101)
-        # count = random.randint(1,21) * 5
-        count = random.randint(1,21) * 20
-        f.write("%d,%d,%d\n" % (i, price, count))
+        # stock = random.randint(1,21) * 5
+        stock = random.randint(1,21) * 20
+        f.write("%d,%d,%d\n" % (i, price, stock))

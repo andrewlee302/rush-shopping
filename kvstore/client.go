@@ -30,6 +30,12 @@ func (c *Client) Close() {
 	c.rpcClient.Close()
 }
 
+func (c *Client) Put(key string, value string) (ok bool, reply Reply) {
+	args := &PutArgs{Key: key, Value: value}
+	ok = c.call("TinyStore.Put", args, &reply)
+	return
+}
+
 func (c *Client) HSet(key, field, value string) (ok bool, reply Reply) {
 	args := &HSetArgs{Key: key, Field: field, Value: value}
 	ok = c.call("TinyStore.HSet", args, &reply)
@@ -46,18 +52,36 @@ func (c *Client) HGetAll(key string) (ok bool, reply MapReply) {
 	args := &HGetAllArgs{Key: key}
 	replyBinary := &MapReplyBinary{}
 	ok = c.call("TinyStore.HGetAll", args, &replyBinary)
-	buf := bytes.NewReader(replyBinary.Value)
-	decoder := gob.NewDecoder(buf)
-	if err := decoder.Decode(&reply.Value); err != nil {
-		log.Fatal("decoder error:", err)
-	}
 	reply.Flag = replyBinary.Flag
+	if !reply.Flag {
+		reply.Value = nil
+	} else {
+		buf := bytes.NewReader(replyBinary.Value)
+		decoder := gob.NewDecoder(buf)
+		if err := decoder.Decode(&reply.Value); err != nil {
+			log.Fatal("decoder error:", err)
+		}
+	}
 	return
 }
 
 func (c *Client) HIncr(key, field string, diff int) (ok bool, reply Reply) {
 	args := &HIncrArgs{Key: key, Field: field, Diff: diff}
 	ok = c.call("TinyStore.HIncr", args, &reply)
+	return
+}
+
+func (c *Client) HDel(key, field string) (ok bool) {
+	args := &HDelArgs{Key: key, Field: field}
+	var reply NoneStruct
+	ok = c.call("TinyStore.HDel", args, &reply)
+	return
+}
+
+func (c *Client) HDelAll(key string) (ok bool) {
+	args := &HDelAllArgs{Key: key}
+	var reply NoneStruct
+	ok = c.call("TinyStore.HDelAll", args, &reply)
 	return
 }
 
@@ -73,15 +97,23 @@ func (c *Client) SIsMember(key, member string) (ok bool, reply Reply) {
 	return
 }
 
-func (c *Client) Put(key string, value string) (ok bool, reply Reply) {
-	args := &PutArgs{Key: key, Value: value}
-	ok = c.call("TinyStore.Put", args, &reply)
+func (c *Client) SDel(key string) (ok bool) {
+	args := &SDelArgs{Key: key}
+	var reply NoneStruct
+	ok = c.call("TinyStore.SDel", args, &reply)
 	return
 }
 
 func (c *Client) Get(key string) (ok bool, reply Reply) {
 	args := &GetArgs{Key: key}
 	ok = c.call("TinyStore.Get", args, &reply)
+	return
+}
+
+func (c *Client) Del(key string) (ok bool) {
+	args := &DelArgs{Key: key}
+	var reply NoneStruct
+	ok = c.call("TinyStore.Del", args, &reply)
 	return
 }
 

@@ -4,6 +4,8 @@ type GetArgs struct {
 	Key string
 }
 
+type DelArgs GetArgs
+
 type PutArgs struct {
 	Key   string
 	Value string
@@ -35,6 +37,8 @@ type SAddArgs struct {
 
 type SIsMemberArgs SAddArgs
 
+type SDelArgs GetArgs
+
 type HSetArgs struct {
 	Key   string
 	Field string
@@ -46,9 +50,11 @@ type HGetArgs struct {
 	Field string
 }
 
-type HGetAllArgs struct {
-	Key string
-}
+type HGetAllArgs GetArgs
+
+type HDelAllArgs GetArgs
+
+type HDelArgs HGetArgs
 
 type HIncrArgs struct {
 	Key   string
@@ -59,6 +65,10 @@ type HIncrArgs struct {
 type MapReply struct {
 	Flag  bool
 	Value map[string]string
+}
+
+type NoneStruct struct {
+	A int
 }
 
 type MapReplyBinary struct {
