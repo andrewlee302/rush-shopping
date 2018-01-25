@@ -6,6 +6,7 @@ package shopping
 // * The IDs of items are increasing from 1 continuously.
 // * The ID of the (root) administrator user is 0.
 // * The IDs of normal users are increasing from 1 continuously.
+// * CartID is auto-increased from 1.
 //
 // The data format in KV-Store could be referred in
 // shop_kvformat.md.

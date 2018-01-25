@@ -57,26 +57,19 @@ func (c *TransKVClient) Close() {
 func (c *TransKVClient) Put(key string, value string) (ok bool, reply kvstore.Reply) {
 	fmt.Println("here put")
 	args := &kvstore.PutArgs{Key: key, Value: value}
-	ok = c.call("TransKVStore.Put", args, &reply)
+	ok = c.call("TransKVStore.RPCPut", args, &reply)
 	return
 }
 
 func (c *TransKVClient) Get(key string) (ok bool, reply kvstore.Reply) {
 	args := &kvstore.GetArgs{Key: key}
-	ok = c.call("TransKVStore.Get", args, &reply)
+	ok = c.call("TransKVStore.RPCGet", args, &reply)
 	return
 }
 
-func (c *TransKVClient) Del(key string) (ok bool) {
-	args := &kvstore.DelArgs{Key: key}
-	var reply kvstore.NoneStruct
-	ok = c.call("TransKVStore.Del", args, &reply)
-	return
-}
-
-func (c *TransKVClient) Incr(key string, diff int) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.IncrArgs{Key: key, Diff: diff}
-	ok = c.call("TransKVStore.Incr", args, &reply)
+func (c *TransKVClient) Incr(key string, delta int) (ok bool, reply kvstore.Reply) {
+	args := &kvstore.IncrArgs{Key: key, Delta: delta}
+	ok = c.call("TransKVStore.RPCIncr", args, &reply)
 	return
 }
 
@@ -89,73 +82,3 @@ func (c *TransKVClient) call(name string, args interface{}, reply interface{}) b
 	fmt.Println(err)
 	return false
 }
-
-/*
-func (c *TransKVClient) HSet(key, field, value string) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.HSetArgs{Key: key, Field: field, Value: value}
-	ok = c.call("TransKVStore.HSet", args, &reply)
-	return
-}
-
-func (c *TransKVClient) HGet(key, field string) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.HGetArgs{Key: key, Field: field}
-	ok = c.call("TransKVStore.HGet", args, &reply)
-	return
-}
-
-func (c *TransKVClient) HGetAll(key string) (ok bool, reply kvstore.MapReply) {
-	args := &kvstore.HGetAllArgs{Key: key}
-	replyBinary := &kvstore.MapReplyBinary{}
-	ok = c.call("TransKVStore.HGetAll", args, &replyBinary)
-	reply.Flag = replyBinary.Flag
-	if !reply.Flag {
-		reply.Value = nil
-	} else {
-		buf := bytes.NewReader(replyBinary.Value)
-		decoder := gob.NewDecoder(buf)
-		if err := decoder.Decode(&reply.Value); err != nil {
-			log.Fatal("decoder error:", err)
-		}
-	}
-	return
-}
-
-func (c *TransKVClient) HIncr(key, field string, diff int) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.HIncrArgs{Key: key, Field: field, Diff: diff}
-	ok = c.call("TransKVStore.HIncr", args, &reply)
-	return
-}
-
-func (c *TransKVClient) HDel(key, field string) (ok bool) {
-	args := &kvstore.HDelArgs{Key: key, Field: field}
-	var reply kvstore.NoneStruct
-	ok = c.call("TransKVStore.HDel", args, &reply)
-	return
-}
-
-func (c *TransKVClient) HDelAll(key string) (ok bool) {
-	args := &kvstore.HDelAllArgs{Key: key}
-	var reply kvstore.NoneStruct
-	ok = c.call("TransKVStore.HDelAll", args, &reply)
-	return
-}
-
-func (c *TransKVClient) SAdd(key, member string) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.SAddArgs{Key: key, Member: member}
-	ok = c.call("TransKVStore.SAdd", args, &reply)
-	return
-}
-
-func (c *TransKVClient) SIsMember(key, member string) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.SIsMemberArgs{Key: key, Member: member}
-	ok = c.call("TransKVStore.SIsMember", args, &reply)
-	return
-}
-
-func (c *TransKVClient) SDel(key string) (ok bool) {
-	args := &kvstore.SDelArgs{Key: key}
-	var reply kvstore.NoneStruct
-	ok = c.call("TransKVStore.SDel", args, &reply)
-	return
-}
-*/

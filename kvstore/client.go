@@ -1,10 +1,7 @@
 package kvstore
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
-	"log"
 	"net"
 	"net/rpc"
 	"syscall"
@@ -20,7 +17,7 @@ func NewClient(srvAddr string) *Client {
 	if err != nil {
 		err1 := err.(*net.OpError)
 		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
-			fmt.Printf("TinyStore Dial() failed: %v\n", err1)
+			fmt.Printf("TinyKVStore Dial() failed: %v\n", err1)
 		}
 		return nil
 	}
@@ -32,106 +29,19 @@ func (c *Client) Close() {
 
 func (c *Client) Put(key string, value string) (ok bool, reply Reply) {
 	args := &PutArgs{Key: key, Value: value}
-	ok = c.call("TinyStore.Put", args, &reply)
-	return
-}
-
-func (c *Client) HSet(key, field, value string) (ok bool, reply Reply) {
-	args := &HSetArgs{Key: key, Field: field, Value: value}
-	ok = c.call("TinyStore.HSet", args, &reply)
-	return
-}
-
-func (c *Client) HGet(key, field string) (ok bool, reply Reply) {
-	args := &HGetArgs{Key: key, Field: field}
-	ok = c.call("TinyStore.HGet", args, &reply)
-	return
-}
-
-func (c *Client) HGetAll(key string) (ok bool, reply MapReply) {
-	args := &HGetAllArgs{Key: key}
-	replyBinary := &MapReplyBinary{}
-	ok = c.call("TinyStore.HGetAll", args, &replyBinary)
-	reply.Flag = replyBinary.Flag
-	if !reply.Flag {
-		reply.Value = nil
-	} else {
-		buf := bytes.NewReader(replyBinary.Value)
-		decoder := gob.NewDecoder(buf)
-		if err := decoder.Decode(&reply.Value); err != nil {
-			log.Fatal("decoder error:", err)
-		}
-	}
-	return
-}
-
-func (c *Client) HIncr(key, field string, diff int) (ok bool, reply Reply) {
-	args := &HIncrArgs{Key: key, Field: field, Diff: diff}
-	ok = c.call("TinyStore.HIncr", args, &reply)
-	return
-}
-
-func (c *Client) HDel(key, field string) (ok bool) {
-	args := &HDelArgs{Key: key, Field: field}
-	var reply NoneStruct
-	ok = c.call("TinyStore.HDel", args, &reply)
-	return
-}
-
-func (c *Client) HDelAll(key string) (ok bool) {
-	args := &HDelAllArgs{Key: key}
-	var reply NoneStruct
-	ok = c.call("TinyStore.HDelAll", args, &reply)
-	return
-}
-
-func (c *Client) SAdd(key, member string) (ok bool, reply Reply) {
-	args := &SAddArgs{Key: key, Member: member}
-	ok = c.call("TinyStore.SAdd", args, &reply)
-	return
-}
-
-func (c *Client) SIsMember(key, member string) (ok bool, reply Reply) {
-	args := &SIsMemberArgs{Key: key, Member: member}
-	ok = c.call("TinyStore.SIsMember", args, &reply)
-	return
-}
-
-func (c *Client) SDel(key string) (ok bool) {
-	args := &SDelArgs{Key: key}
-	var reply NoneStruct
-	ok = c.call("TinyStore.SDel", args, &reply)
+	ok = c.call("TinyKVStore.RPCPut", args, &reply)
 	return
 }
 
 func (c *Client) Get(key string) (ok bool, reply Reply) {
 	args := &GetArgs{Key: key}
-	ok = c.call("TinyStore.Get", args, &reply)
+	ok = c.call("TinyKVStore.RPCGet", args, &reply)
 	return
 }
 
-func (c *Client) Del(key string) (ok bool) {
-	args := &DelArgs{Key: key}
-	var reply NoneStruct
-	ok = c.call("TinyStore.Del", args, &reply)
-	return
-}
-
-func (c *Client) Incr(key string, diff int) (ok bool, reply Reply) {
-	args := &IncrArgs{Key: key, Diff: diff}
-	ok = c.call("TinyStore.Incr", args, &reply)
-	return
-}
-
-func (c *Client) CompareAndSet(key string, base, setValue int, compareOp func(int, int) bool) (ok bool, reply Reply) {
-	args := &CompareAndSetArgs{Key: key, Base: base, SetValue: setValue, CompareOp: compareOp}
-	ok = c.call("TinyStore.CompareAndSet", args, &reply)
-	return
-}
-
-func (c *Client) CompareAndIncr(key string, base, diff int, compareOp func(int, int) bool) (ok bool, reply Reply) {
-	args := &CompareAndIncrArgs{Key: key, Base: base, Diff: diff, CompareOp: compareOp}
-	ok = c.call("TinyStore.CompareAndIncr", args, &reply)
+func (c *Client) Incr(key string, delta int) (ok bool, reply Reply) {
+	args := &IncrArgs{Key: key, Delta: delta}
+	ok = c.call("TinyKVStore.RPCIncr", args, &reply)
 	return
 }
 

@@ -18,12 +18,6 @@ type TransKVStore struct {
 	itemList []Item // real item start from index 1
 
 	transRwLock sync.RWMutex
-	// transClient is the client to interact with this kvstore,
-	// It is only used in the transaction service.
-	// Application will call the transcation handler, which will
-	// invoke basic RPC call through transClient. The code handler keeps
-	// the code consistency with the application by using RPC call.
-	transClient *TransKVClient
 }
 
 // AddItemArgs is the argument of the AddItemTrans function.
@@ -64,7 +58,6 @@ func (ks *TransKVStore) Serve() {
 		log.Fatal("listen error: ", e)
 	}
 	ks.l = l
-	ks.transClient = NewTransKVClient(ks.addr)
 
 	go func() {
 		for !ks.IsDead() {
@@ -90,10 +83,10 @@ func (ks *TransKVStore) LoadItemList(itemsSize *int, reply *int) error {
 	defer ks.transRwLock.RUnlock()
 	ks.itemList = make([]Item, 1+*itemsSize)
 	for itemID := 1; itemID <= *itemsSize; itemID++ {
-		_, reply := ks.transClient.Get(ItemsPriceKey + ":" + strconv.Itoa(itemID))
-		price, _ := strconv.Atoi(reply.Value)
-		_, reply = ks.transClient.Get(ItemsStockKey + ":" + strconv.Itoa(itemID))
-		stock, _ := strconv.Atoi(reply.Value)
+		value, _ := ks.Get(ItemsPriceKey + ":" + strconv.Itoa(itemID))
+		price, _ := strconv.Atoi(value)
+		value, _ = ks.Get(ItemsStockKey + ":" + strconv.Itoa(itemID))
+		stock, _ := strconv.Atoi(value)
 		ks.itemList[itemID] = Item{ID: itemID, Price: price, Stock: stock}
 	}
 	return nil
@@ -107,43 +100,47 @@ func (ks *TransKVStore) AddItemTrans(args *AddItemArgs, transReply *TransReply) 
 	// TODO
 	cartID, _ := strconv.Atoi(args.CartIDStr)
 	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
-	var reply kvstore.Reply
+	var value string
+	var existed bool
 
-	// Test whether the cart exisks, and the cart belongs other users.
+	// Test whether the cart exists,
 	var maxCartID = 0
-	if _, reply = ks.transClient.Get(CartIDKey); reply.Flag {
-		maxCartID, _ = strconv.Atoi(reply.Value)
-	}
-	if cartID > maxCartID {
+	if value, existed = ks.Get(CartIDKey); existed {
+		maxCartID, _ = strconv.Atoi(value)
+		if cartID > maxCartID || cartID < 1 {
+			*transReply = TxnNotFound
+			return nil
+		}
+	} else {
 		*transReply = TxnNotFound
 		return nil
 	}
 
 	// Test whether the cart has been ordered.
 	orderIDStr := args.UserToken
-	if _, reply = ks.transClient.Get(OrderKey + ":" + orderIDStr); reply.Flag {
+	if value, existed = ks.Get(OrderKey + ":" + orderIDStr); existed {
 		*transReply = TxnNotFound
 		return nil
 	}
 
-	_, reply = ks.transClient.Get(cartItemNumKey)
-	if !reply.Flag {
+	// Test whether the cart belongs other users.
+	if value, existed = ks.Get(cartItemNumKey); !existed {
 		*transReply = TxnNotAuth
 		return nil
 	}
 
 	// Test whether #items in cart exceeds 3.
-	if total, _ := strconv.Atoi(reply.Value); total+args.ItemCnt > 3 {
+	if total, _ := strconv.Atoi(value); total+args.ItemCnt > 3 {
 		*transReply = TxnItemOutOfLimit
 		return nil
 	}
 
 	// Increase the values about the cart.
-	_, _ = ks.transClient.Incr(cartItemNumKey, args.ItemCnt)
-	_, reply = ks.transClient.Get(cartDetailKey)
-	cartDetail := parseCartDetail(reply.Value)
+	ks.Incr(cartItemNumKey, args.ItemCnt)
+	value, _ = ks.Get(cartDetailKey)
+	cartDetail := parseCartDetail(value)
 	cartDetail[args.ItemID] += args.ItemCnt
-	ks.transClient.Put(cartDetailKey, composeCartDetail(cartDetail))
+	ks.Put(cartDetailKey, composeCartDetail(cartDetail))
 	*transReply = TxnOK
 	return nil
 }
@@ -156,41 +153,47 @@ func (ks *TransKVStore) SubmitOrderTrans(args *SubmitOrderArgs, transReply *Tran
 	// TODO
 	cartID, _ := strconv.Atoi(args.CartIDStr)
 	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
-	var reply kvstore.Reply
+	var value string
+	var existed bool
 
 	// Test whether the cart exists, it belongs other users,
 	// and it is empty.
+	// Test whether the cart exists,
 	var maxCartID = 0
-	if _, reply = ks.transClient.Get(CartIDKey); reply.Flag {
-		maxCartID, _ = strconv.Atoi(reply.Value)
-	}
-	if cartID > maxCartID {
+	if value, existed = ks.Get(CartIDKey); existed {
+		maxCartID, _ = strconv.Atoi(value)
+		if cartID > maxCartID || cartID < 1 {
+			*transReply = TxnNotFound
+			return nil
+		}
+	} else {
 		*transReply = TxnNotFound
 		return nil
 	}
-	if _, reply = ks.transClient.Get(cartItemNumKey); !reply.Flag {
+
+	if value, existed = ks.Get(cartItemNumKey); !existed {
 		*transReply = TxnNotAuth
 		return nil
 	}
-	num, _ := strconv.Atoi(reply.Value)
+	num, _ := strconv.Atoi(value)
 	if num == 0 {
 		*transReply = TxnCartEmpyt
 		return nil
 	}
 
 	// Test whether the user has submited an order.
-	if _, reply = ks.transClient.Get(OrderKey + ":" + args.UserToken); reply.Flag {
+	if value, existed = ks.Get(OrderKey + ":" + args.UserToken); existed {
 		*transReply = TxnOrderOutOfLimit
 		return nil
 	}
 
 	// Test whether the stock of items is enough for the cart.
 	total := 0
-	_, reply = ks.transClient.Get(cartDetailKey)
-	cartDetail := parseCartDetail(reply.Value)
+	value, _ = ks.Get(cartDetailKey)
+	cartDetail := parseCartDetail(value)
 	for itemID, itemCnt := range cartDetail {
-		_, reply1 := ks.transClient.Get(ItemsStockKey + ":" + strconv.Itoa(itemID))
-		stock, _ := strconv.Atoi(reply1.Value)
+		value, _ := ks.Get(ItemsStockKey + ":" + strconv.Itoa(itemID))
+		stock, _ := strconv.Atoi(value)
 		total += itemCnt * ks.itemList[itemID].Price
 		if stock < itemCnt {
 			*transReply = TxnOutOfStock
@@ -200,12 +203,12 @@ func (ks *TransKVStore) SubmitOrderTrans(args *SubmitOrderArgs, transReply *Tran
 
 	// Decrease the stock.
 	for itemID, itemCnt := range cartDetail {
-		ks.transClient.Incr(ItemsStockKey+":"+strconv.Itoa(itemID), 0-itemCnt)
+		ks.Incr(ItemsStockKey+":"+strconv.Itoa(itemID), 0-itemCnt)
 	}
 
 	// Record the order and delete the cart.
 	orderIDStr := args.UserToken
-	ks.transClient.Put(OrderKey+":"+orderIDStr, composeOrderInfo(false, args.CartIDStr, total))
+	ks.Put(OrderKey+":"+orderIDStr, composeOrderInfo(false, args.CartIDStr, total))
 
 	*transReply = TxnOK
 	return nil
@@ -216,11 +219,12 @@ func (ks *TransKVStore) PayOrderTrans(args *PayOrderArgs, transReply *TransReply
 	// ks.transRwLock.Lock()
 	// defer ks.transRwLock.Unlock()
 
-	var reply kvstore.Reply
+	var value string
+	var existed bool
 
 	// TODO
 	// Test whether the order exists, or it belongs other users.
-	if _, reply = ks.transClient.Get(OrderKey + ":" + args.OrderIDStr); !reply.Flag {
+	if value, existed = ks.Get(OrderKey + ":" + args.OrderIDStr); !existed {
 		*transReply = TxnNotFound
 		return nil
 	}
@@ -230,26 +234,26 @@ func (ks *TransKVStore) PayOrderTrans(args *PayOrderArgs, transReply *TransReply
 	}
 
 	// Test whether the order have been paid.
-	hasPaid, CartIDStr, total := parseOrderInfo(reply.Value)
+	hasPaid, CartIDStr, total := parseOrderInfo(value)
 	if hasPaid {
 		*transReply = TxnOrderPaid
 		return nil
 	}
 
 	// Test whether the balance of the user is sufficient.
-	_, reply = ks.transClient.Get(BalanceKey + ":" + args.UserToken)
-	balance, _ := strconv.Atoi(reply.Value)
+	value, _ = ks.Get(BalanceKey + ":" + args.UserToken)
+	balance, _ := strconv.Atoi(value)
 	if balance < total {
 		*transReply = TxnBalanceInsufficient
 		return nil
 	}
 
 	// Decrease the balance of the user.
-	ks.transClient.Incr(BalanceKey+":"+args.UserToken, 0-total)
-	ks.transClient.Incr(BalanceKey+":"+ROOT_USER_TOKEN, total)
+	ks.Incr(BalanceKey+":"+args.UserToken, 0-total)
+	ks.Incr(BalanceKey+":"+ROOT_USER_TOKEN, total)
 
 	// Record the order.
-	ks.transClient.Put(OrderKey+":"+args.OrderIDStr, composeOrderInfo(true, CartIDStr, total))
+	ks.Put(OrderKey+":"+args.OrderIDStr, composeOrderInfo(true, CartIDStr, total))
 
 	*transReply = TxnOK
 	return nil
