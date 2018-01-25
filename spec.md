@@ -365,6 +365,7 @@ POST /pay?access_token=xxx
 <a name="orders" />
 ## 查询订单
 `GET /orders`
+不应该包含个数为0的商品。
 
 #### 请求示例
 
@@ -392,6 +393,7 @@ GET /orders?access_token=xxx
 <a name="admin-orders" />
 ## 后台接口－查询订单
 `GET /admin/orders`
+不应该包含个数为0的商品。
 
 #### 请求示例
 

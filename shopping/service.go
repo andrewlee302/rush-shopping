@@ -1,5 +1,15 @@
 package shopping
 
+// Rush-shopping service.
+//
+// We assume the followings:
+// * The IDs of items are increasing from 1 continuously.
+// * The ID of the (root) administrator user is 0.
+// * The IDs of normal users are increasing from 1 continuously.
+//
+// The data format in KV-Store could be referred in
+// shop_kvformat.md.
+
 import (
 	"encoding/csv"
 	"encoding/json"
@@ -26,7 +36,9 @@ const (
 
 // Keys of kvstore
 const (
-	OrdersKey     = "orders"
+	TokenKey      = "token"
+	OrderKey      = "order"
+	ItemsSize     = "items_size"
 	ItemsStockKey = "items_stock"
 	ItemsPriceKey = "items_price"
 	CartIDKey     = "cartID"
@@ -84,8 +96,8 @@ type ShopServer struct {
 	ItemList  []Item // real item start from index 1
 	ItemLock  sync.Mutex
 	UserMap   map[string]UserIDAndPass // map[name]password
-	MaxItemID int
-	MaxUserID int
+	MaxItemID int                      // The same with the number of types of items.
+	MaxUserID int                      // The same with the number of normal users.
 }
 
 func InitService(appAddr, kvstoreAddr, userCsv, itemCsv string) *ShopServer {
@@ -152,7 +164,8 @@ func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 		for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
 			userID, _ := strconv.Atoi(strs[0])
 			ss.UserMap[strs[1]] = UserIDAndPass{userID, strs[2]}
-			kvClient.HSet(BalanceKey, userID2Token(userID), strs[3])
+			userToken := userID2Token(userID)
+			kvClient.Put(BalanceKey+":"+userToken, strs[3])
 			if userID > ss.MaxUserID {
 				ss.MaxUserID = userID
 			}
@@ -175,40 +188,20 @@ func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 			stock, _ := strconv.Atoi(strs[2])
 			ss.ItemList = append(ss.ItemList, Item{ID: itemID, Price: price, Stock: stock})
 
-			kvClient.HSet(ItemsPriceKey, strs[0], strs[1])
-			kvClient.HSet(ItemsStockKey, strs[0], strs[2])
+			kvClient.Put(ItemsPriceKey+":"+strs[0], strs[1])
+			kvClient.Put(ItemsStockKey+":"+strs[0], strs[2])
 
 			if itemID > ss.MaxItemID {
 				ss.MaxItemID = itemID
 			}
 		}
+		kvClient.Put(ItemsSize, strconv.Itoa(itemCnt))
 
 		file.Close()
 	} else {
 		panic(err.Error())
 	}
 	kvClient.LoadItemList(itemCnt)
-
-	// check hget and hset in kvstore
-	// if file, err := os.Open(itemCsv); err == nil {
-	// 	reader := csv.NewReader(file)
-	// 	for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
-	// 		itemID, _ := strconv.Atoi(strs[0])
-	// 		stock, _ := strconv.Atoi(strs[2])
-
-	// 		if ok, reply := kvClient.HGet(ItemsPriceKey, strs[0]); !ok || reply.Value != strs[2] {
-	// 			fmt.Println(itemID, stock)
-	// 		}
-
-	// 		if itemID > MaxItemID {
-	// 			MaxItemID = itemID
-	// 		}
-	// 	}
-
-	// 	file.Close()
-	// } else {
-	// 	panic(err.Error())
-	// }
 }
 
 func (ss *ShopServer) login(writer http.ResponseWriter, req *http.Request) {
@@ -234,7 +227,7 @@ func (ss *ShopServer) login(writer http.ResponseWriter, req *http.Request) {
 
 	userID := userIDAndPass.ID
 	token := userID2Token(userID)
-	kvClient.SAdd("tokens", token)
+	kvClient.Put(TokenKey+":"+token, "1")
 	okMsg := []byte("{\"user_id\":" + strconv.Itoa(userID) + ",\"username\":\"" + user.Username + "\",\"access_token\":\"" + token + "\"}")
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(okMsg)
@@ -248,13 +241,18 @@ func (ss *ShopServer) queryItem(writer http.ResponseWriter, req *http.Request) {
 	if exist, _ := ss.authorize(writer, req, kvClient, false); !exist {
 		return
 	}
-	_, mapReply := kvClient.HGetAll(ItemsPriceKey)
-	items := mapReply.Value
+	var wg sync.WaitGroup
+	wg.Add(len(ss.ItemList) - 1)
 	// TODO data race
 	ss.ItemLock.Lock()
 	for i := 1; i < len(ss.ItemList); i++ {
-		ss.ItemList[i].Stock, _ = strconv.Atoi(items[strconv.Itoa(ss.ItemList[i].ID)])
+		go func(i int) {
+			_, reply := kvClient.Get(ItemsPriceKey + ":" + strconv.Itoa(ss.ItemList[i].ID))
+			ss.ItemList[i].Stock, _ = strconv.Atoi(reply.Value)
+			wg.Done()
+		}(i)
 	}
+	wg.Wait()
 	itemsJson := make([]byte, 3370)
 	itemsJson, _ = json.Marshal(ss.ItemList[1:])
 	ss.ItemLock.Unlock()
@@ -322,7 +320,7 @@ func (ss *ShopServer) addItem(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	// fmt.Println("addItemTrans")
-	_, flag := kvClient.AddItemTrans(cartIDStr, token, strconv.Itoa(item.ItemID), item.Count)
+	_, flag := kvClient.AddItemTrans(cartIDStr, token, item.ItemID, item.Count)
 
 	switch flag {
 	case TxnOK:
@@ -389,6 +387,7 @@ func (ss *ShopServer) submitOrder(writer http.ResponseWriter, req *http.Request)
 	}
 
 	_, flag := kvClient.SubmitOrderTrans(cartIDStr, token)
+	fmt.Println("submit", flag)
 
 	switch flag {
 	case TxnOK:
@@ -492,17 +491,16 @@ func (ss *ShopServer) queryOneOrder(writer http.ResponseWriter, req *http.Reques
 
 	var reply kvstore.Reply
 
-	if _, reply = kvClient.HGet(OrdersKey, token); !reply.Flag {
+	if _, reply = kvClient.Get(OrderKey + ":" + token); !reply.Flag {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte("[]"))
 		return
 	}
 	hasPaid, cartIDStr, total := parseOrderInfo(reply.Value)
-	_, cartContentKey := getCartKeys(cartIDStr, token)
+	_, cartDetailKey := getCartKeys(cartIDStr, token)
 
-	var mapReply kvstore.MapReply
-	_, mapReply = kvClient.HGetAll(cartContentKey)
-	itemIDAndCounts := mapReply.Value
+	_, reply = kvClient.Get(cartDetailKey)
+	itemIDAndCounts := parseCartDetail(reply.Value)
 
 	var orders [1]Order
 	order := &orders[0]
@@ -512,9 +510,7 @@ func (ss *ShopServer) queryOneOrder(writer http.ResponseWriter, req *http.Reques
 	order.Items = make([]ItemCount, itemNum)
 	order.Total = total
 	cnt := 0
-	for itemIDStr, itemCntStr := range itemIDAndCounts {
-		itemID, _ := strconv.Atoi(itemIDStr)
-		itemCnt, _ := strconv.Atoi(itemCntStr)
+	for itemID, itemCnt := range itemIDAndCounts {
 		if itemCnt != 0 {
 			order.Items[cnt].ItemID = itemID
 			order.Items[cnt].Count = itemCnt
@@ -539,40 +535,31 @@ func (ss *ShopServer) queryAllOrders(writer http.ResponseWriter, req *http.Reque
 
 	start := time.Now()
 
-	var mapReply kvstore.MapReply
-	_, mapReply = kvClient.HGetAll(OrdersKey)
-	ordersMap := mapReply.Value
-	orders := make([]OrderDetail, len(ordersMap))
-	cnt := 0
+	orders := make([]OrderDetail, 0, ss.MaxUserID)
 
-	for orderIDStr, orderInfo := range ordersMap {
-		userToken := orderIDStr
+	for userID := 1; userID < ss.MaxUserID; userID++ {
+		userToken := userID2Token(userID)
+		_, reply := kvClient.Get(OrderKey + ":" + userToken)
+		if !reply.Flag {
+			continue
+		}
+		orderInfo := reply.Value
 		hasPaid, cartIDStr, total := parseOrderInfo(orderInfo)
 
-		_, cartContentKey := getCartKeys(cartIDStr, userToken)
-		_, mapReply = kvClient.HGetAll(cartContentKey)
-		itemIDAndCounts := mapReply.Value
+		_, cartDetailKey := getCartKeys(cartIDStr, userToken)
+		_, reply = kvClient.Get(cartDetailKey)
+		itemIDAndCounts := parseCartDetail(reply.Value)
 
 		itemNum := len(itemIDAndCounts) // it cannot be zero.
-		orders[cnt].IDStr = orderIDStr
-		orders[cnt].UserID = token2UserID(userToken)
-		orders[cnt].Items = make([]ItemCount, itemNum)
-		orders[cnt].Total = total
-		orders[cnt].HasPaid = hasPaid
+		orderDetail := OrderDetail{UserID: userID, Order: Order{IDStr: userToken, Items: make([]ItemCount, 0, itemNum), Total: total, HasPaid: hasPaid}}
 
-		cnt2 := 0
-		for itemIDStr, itemCntStr := range itemIDAndCounts {
-			itemID, _ := strconv.Atoi(itemIDStr)
-			itemCnt, _ := strconv.Atoi(itemCntStr)
+		for itemID, itemCnt := range itemIDAndCounts {
 			if itemCnt != 0 {
-				orders[cnt].Items[cnt2].ItemID = itemID
-				orders[cnt].Items[cnt2].Count = itemCnt
-				cnt2++
+				orderDetail.Items = append(orderDetail.Items, ItemCount{ItemID: itemID, Count: itemCnt})
 			}
 		}
-		cnt++
+		orders = append(orders, orderDetail)
 	}
-
 	body, _ := json.Marshal(orders)
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(body)
@@ -602,7 +589,7 @@ func (ss *ShopServer) authorize(writer http.ResponseWriter, req *http.Request, k
 		if isRoot && authUserIDStr != ss.rootToken || !isRoot && (authUserID < 1 || authUserID > ss.MaxUserID) {
 			valid = false
 		} else {
-			if _, reply := kvClient.SIsMember("tokens", authUserIDStr); !reply.Flag {
+			if _, reply := kvClient.Get(TokenKey + ":" + authUserIDStr); !reply.Flag {
 				valid = false
 			}
 		}
@@ -640,47 +627,4 @@ func checkBodyEmpty(writer http.ResponseWriter, req *http.Request) (bool, []byte
 		return true, nil
 	}
 	return false, ret
-}
-
-// Retrun the item-num-key and content-key in kvstore.
-func getCartKeys(cartIDStr, token string) (cartItemNumKey, cartContentKey string) {
-	cartItemNumKey = "cart:" + cartIDStr + ":" + token + ":num"
-	cartContentKey = "cart:" + cartIDStr + ":" + token
-	return
-}
-
-func userID2Token(userID int) string {
-	return strconv.Itoa(userID)
-}
-
-func token2UserID(token string) int {
-	if id, err := strconv.Atoi(token); err == nil {
-		return id
-	} else {
-		panic(err)
-	}
-}
-
-func composeOrderInfo(hasPaid bool, cartIDStr string, total int) string {
-	var info [3]string
-	if hasPaid {
-		info[0] = ORDER_PAID_FLAG
-	} else {
-		info[0] = ORDER_UNPAID_FLAG
-	}
-	info[1] = cartIDStr
-	info[2] = strconv.Itoa(total)
-	return strings.Join(info[:], ",")
-}
-
-func parseOrderInfo(orderInfo string) (hasPaid bool, cartIDStr string, total int) {
-	info := strings.Split(orderInfo, ",")
-	if info[0] == ORDER_PAID_FLAG {
-		hasPaid = true
-	} else {
-		hasPaid = false
-	}
-	cartIDStr = info[1]
-	total, _ = strconv.Atoi(info[2])
-	return
 }

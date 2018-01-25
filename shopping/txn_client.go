@@ -1,10 +1,7 @@
 package shopping
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
-	"log"
 	"net"
 	"net/rpc"
 	"rush-shopping/kvstore"
@@ -33,10 +30,10 @@ func (c *TransKVClient) LoadItemList(itemsCnt int) (ok bool, reply int) {
 	return
 }
 
-func (c *TransKVClient) AddItemTrans(cartIDStr, userToken, itemIDStr string,
+func (c *TransKVClient) AddItemTrans(cartIDStr, userToken string, itemID,
 	itemCnt int) (ok bool, reply int) {
 	args := &AddItemArgs{CartIDStr: cartIDStr, UserToken: userToken,
-		ItemIDStr: itemIDStr, ItemCnt: itemCnt}
+		ItemID: itemID, ItemCnt: itemCnt}
 	ok = c.call("TransKVStore.AddItemTrans", args, &reply)
 	return
 }
@@ -57,6 +54,43 @@ func (c *TransKVClient) Close() {
 	c.rpcClient.Close()
 }
 
+func (c *TransKVClient) Put(key string, value string) (ok bool, reply kvstore.Reply) {
+	fmt.Println("here put")
+	args := &kvstore.PutArgs{Key: key, Value: value}
+	ok = c.call("TransKVStore.Put", args, &reply)
+	return
+}
+
+func (c *TransKVClient) Get(key string) (ok bool, reply kvstore.Reply) {
+	args := &kvstore.GetArgs{Key: key}
+	ok = c.call("TransKVStore.Get", args, &reply)
+	return
+}
+
+func (c *TransKVClient) Del(key string) (ok bool) {
+	args := &kvstore.DelArgs{Key: key}
+	var reply kvstore.NoneStruct
+	ok = c.call("TransKVStore.Del", args, &reply)
+	return
+}
+
+func (c *TransKVClient) Incr(key string, diff int) (ok bool, reply kvstore.Reply) {
+	args := &kvstore.IncrArgs{Key: key, Diff: diff}
+	ok = c.call("TransKVStore.Incr", args, &reply)
+	return
+}
+
+func (c *TransKVClient) call(name string, args interface{}, reply interface{}) bool {
+	err := c.rpcClient.Call(name, args, reply)
+	if err == nil {
+		return true
+	}
+
+	fmt.Println(err)
+	return false
+}
+
+/*
 func (c *TransKVClient) HSet(key, field, value string) (ok bool, reply kvstore.Reply) {
 	args := &kvstore.HSetArgs{Key: key, Field: field, Value: value}
 	ok = c.call("TransKVStore.HSet", args, &reply)
@@ -124,39 +158,4 @@ func (c *TransKVClient) SDel(key string) (ok bool) {
 	ok = c.call("TransKVStore.SDel", args, &reply)
 	return
 }
-
-func (c *TransKVClient) Put(key string, value string) (ok bool, reply kvstore.Reply) {
-	fmt.Println("here put")
-	args := &kvstore.PutArgs{Key: key, Value: value}
-	ok = c.call("TransKVStore.Put", args, &reply)
-	return
-}
-
-func (c *TransKVClient) Get(key string) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.GetArgs{Key: key}
-	ok = c.call("TransKVStore.Get", args, &reply)
-	return
-}
-
-func (c *TransKVClient) Del(key string) (ok bool) {
-	args := &kvstore.DelArgs{Key: key}
-	var reply kvstore.NoneStruct
-	ok = c.call("TransKVStore.Del", args, &reply)
-	return
-}
-
-func (c *TransKVClient) Incr(key string, diff int) (ok bool, reply kvstore.Reply) {
-	args := &kvstore.IncrArgs{Key: key, Diff: diff}
-	ok = c.call("TransKVStore.Incr", args, &reply)
-	return
-}
-
-func (c *TransKVClient) call(name string, args interface{}, reply interface{}) bool {
-	err := c.rpcClient.Call(name, args, reply)
-	if err == nil {
-		return true
-	}
-
-	fmt.Println(err)
-	return false
-}
+*/
