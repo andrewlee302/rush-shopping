@@ -244,6 +244,15 @@ POST /orders?access_token=xxx
 ```
 
 #### 异常示例
+篮子不属于当前用户
+
+```
+401 Unauthorized
+{
+    "code": "NOT_AUTHORIZED_TO_ACCESS_CART",
+    "message": "无权限访问指定的篮子"
+}
+```
 
 篮子不存在
 
@@ -255,15 +264,7 @@ POST /orders?access_token=xxx
 }
 ```
 
-篮子不属于当前用户
 
-```
-401 Unauthorized
-{
-    "code": "NOT_AUTHORIZED_TO_ACCESS_CART",
-    "message": "无权限访问指定的篮子"
-}
-```
 
 物品库存不足
 
@@ -322,6 +323,16 @@ POST /pay?access_token=xxx
 
 #### 异常示例
 
+订单不属于当前用户
+
+```
+401 Unauthorized
+{
+    "code": "NOT_AUTHORIZED_TO_ACCESS_ORDER",
+    "message": "无权限访问指定的订单"
+}
+```
+
 订单不存在
 
 ```
@@ -332,15 +343,6 @@ POST /pay?access_token=xxx
 }
 ```
 
-订单不属于当前用户
-
-```
-401 Unauthorized
-{
-    "code": "NOT_AUTHORIZED_TO_ACCESS_ORDER",
-    "message": "无权限访问指定的订单"
-}
-```
 
 订单已支付
 

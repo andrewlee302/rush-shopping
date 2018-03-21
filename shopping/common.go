@@ -77,9 +77,9 @@ func token2UserID(token string) int {
 func composeOrderInfo(hasPaid bool, cartIDStr string, total int) string {
 	var info [3]string
 	if hasPaid {
-		info[0] = ORDER_PAID_FLAG
+		info[0] = OrderPaidFlag
 	} else {
-		info[0] = ORDER_UNPAID_FLAG
+		info[0] = OrderUnpaidFlag
 	}
 	info[1] = cartIDStr
 	info[2] = strconv.Itoa(total)
@@ -88,7 +88,7 @@ func composeOrderInfo(hasPaid bool, cartIDStr string, total int) string {
 
 func parseOrderInfo(orderInfo string) (hasPaid bool, cartIDStr string, total int) {
 	info := strings.Split(orderInfo, ",")
-	if info[0] == ORDER_PAID_FLAG {
+	if info[0] == OrderPaidFlag {
 		hasPaid = true
 	} else {
 		hasPaid = false
@@ -98,6 +98,7 @@ func parseOrderInfo(orderInfo string) (hasPaid bool, cartIDStr string, total int
 	return
 }
 
+// if is detailStr is "", return the init map.
 func parseCartDetail(cartDetailStr string) (detail map[int]int) {
 	detail = make(map[int]int)
 	if cartDetailStr == "" {
