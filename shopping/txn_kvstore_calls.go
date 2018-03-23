@@ -7,8 +7,8 @@ import (
 )
 
 func (skv *ShoppingTxnKVStore) CartExist(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartExist start", initRet)
-	// defer fmt.Println("CartExist end", errCode)
+	fmt.Println("CartExist start", initRet)
+	defer fmt.Println("CartExist end", errCode)
 	args := initRet.(AddItemTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
 
@@ -33,8 +33,8 @@ func (skv *ShoppingTxnKVStore) CartExist(initRet interface{}) (errCode int, rbf 
 }
 
 func (skv *ShoppingTxnKVStore) CartOrdered(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartOrdered start:", initRet)
-	// defer fmt.Println("CartOrdered end", errCode)
+	fmt.Println("CartOrdered start:", initRet)
+	defer fmt.Println("CartOrdered end", errCode)
 
 	args := initRet.(AddItemTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
@@ -55,8 +55,8 @@ type CartAuthAndValidArgs struct {
 }
 
 func (skv *ShoppingTxnKVStore) CartAuthAndValid(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartAuthAndValid start:", initRet)
-	// defer func() { fmt.Println("CartAuthAndValid end:", errCode) }()
+	fmt.Println("CartAuthAndValid start:", initRet)
+	defer func() { fmt.Println("CartAuthAndValid end:", errCode) }()
 
 	args := initRet.(AddItemTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
@@ -103,8 +103,8 @@ func (skv *ShoppingTxnKVStore) CartAuthAndValid(initRet interface{}) (errCode in
 // }
 
 func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartAddItem start:", initRet)
-	// defer func() { fmt.Println("CartAddItem end", errCode) }()
+	fmt.Println("CartAddItem start:", initRet)
+	defer func() { fmt.Println("CartAddItem end", errCode) }()
 
 	args := initRet.(AddItemTxnInitRet)
 
@@ -121,8 +121,8 @@ func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rb
 
 // ===============================================================================
 func (skv *ShoppingTxnKVStore) CartExist2(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartExist2 start:", initRet)
-	// defer func() { fmt.Println("CartExist2 end:", errCode) }()
+	fmt.Println("CartExist2 start:", initRet)
+	defer func() { fmt.Println("CartExist2 end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
 
@@ -147,8 +147,8 @@ func (skv *ShoppingTxnKVStore) CartExist2(initRet interface{}) (errCode int, rbf
 }
 
 func (skv *ShoppingTxnKVStore) CartAuthAndEmpty(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("CartAuthAndEmpty start:", initRet)
-	// defer func() { fmt.Println("CartAuthAndEmpty end:", errCode) }()
+	fmt.Println("CartAuthAndEmpty start:", initRet)
+	defer func() { fmt.Println("CartAuthAndEmpty end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
 
@@ -191,8 +191,8 @@ func (skv *ShoppingTxnKVStore) CartAuthAndEmpty(initRet interface{}) (errCode in
 // Broadcast mode
 // Must check whether the key does exist or not.
 func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	// fmt.Println("ItemsStockMinus start:", initRet)
-	// defer func() { fmt.Println("ItemsStockMinus end:", errCode) }()
+	fmt.Println("ItemsStockMinus start:", initRet)
+	defer func() { fmt.Println("ItemsStockMinus end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
 	cartDetail := parseCartDetail(args.CartDetailStr)
 	errCode = TxnOK
@@ -234,11 +234,10 @@ func (skv *ShoppingTxnKVStore) OrderRecord(initRet interface{}) (errCode int, rb
 			skv.Put(args.OrderKey, oldValue)
 		})
 		return
-	} else {
-		rbf = twopc.RollbackFunc(func() {
-			skv.Del(args.OrderKey)
-		})
 	}
+	rbf = twopc.RollbackFunc(func() {
+		skv.Del(args.OrderKey)
+	})
 	errCode = TxnOK
 	return
 }

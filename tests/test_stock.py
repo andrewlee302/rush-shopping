@@ -41,34 +41,32 @@ def test_item_stock_consistency():
                           "message": u"物品库存不足"}
 
 
-def test_admin_query_orders():
-    print "admin_token", admin_token
-    res = json_get("/admin/orders", admin_token)
-    assert res.status_code == 200
-
-    q_orders = res.json()
-    l = sorted([o["id"] for o in q_orders])
-    r = sorted(order_store.keys())
-    # print l
-    # print r
-    if len(l) > len(r):
-        for cnt in range(len(l)):
-            if cnt == len(l)-1 or l[cnt] != r[cnt]:
-                print l[cnt]
-                print q_orders[cnt]
-                break
-
-    assert len(q_orders) == len(order_store)
-
-    for q_order in q_orders:
-        order_id = q_order["id"]
-        assert order_id in order_store
-        assert q_order["user_id"] == order_store[order_id]["user_id"]
-        if q_order["items"] != order_store[order_id]["items"]:
-            print order_id
-        assert q_order["items"] == order_store[order_id]["items"]
-
-
+#def test_admin_query_orders():
+#    print "admin_token", admin_token
+#    res = json_get("/admin/orders", admin_token)
+#    assert res.status_code == 200
+#
+#    q_orders = res.json()
+#    l = sorted([o["id"] for o in q_orders])
+#    r = sorted(order_store.keys())
+#    # print l
+#    # print r
+#    if len(l) > len(r):
+#        for cnt in range(len(l)):
+#            if cnt == len(l)-1 or l[cnt] != r[cnt]:
+#                print l[cnt]
+#                print q_orders[cnt]
+#                break
+#
+#    assert len(q_orders) == len(order_store)
+#
+#    for q_order in q_orders:
+#        order_id = q_order["id"]
+#        assert order_id in order_store
+#        assert q_order["user_id"] == order_store[order_id]["user_id"]
+#        if q_order["items"] != order_store[order_id]["items"]:
+#            print order_id
+#        assert q_order["items"] == order_store[order_id]["items"]
 
 def test_item_not_oversold_under_concurrent():
 
@@ -109,7 +107,7 @@ def test_item_not_oversold_under_concurrent():
         tokens.append(token)
         items_list.append(item_items)
 
-   
+
     def _make(cart_id, token, item_items):
         res = json_post("/orders", token, {"cart_id": cart_id})
         if res.status_code == 200:

@@ -2,28 +2,49 @@ package shopping
 
 import (
 	"distributed-system/twopc"
+	"distributed-system/util"
 	"encoding/gob"
 	"fmt"
 	"strconv"
+	"sync/atomic"
+	"time"
 )
 
 type ShoppingTxnCoordinator struct {
-	coord        *twopc.Coordinator
-	itemList     []Item // real item start from index 1
-	shardsClient *ShardsClient
-	keyHashFunc  twopc.KeyHashFunc
-	timeoutMs    int64
+	coord       *twopc.Coordinator
+	itemList    []Item // real item start from index 1
+	hub         *ShardsClientHub
+	keyHashFunc twopc.KeyHashFunc
+	timeoutMs   int64
+
+	tasks chan *TxnTask
 }
+
+type TxnTask struct {
+	txn      *twopc.Txn
+	initArgs interface{}
+	errCode  int
+}
+
+const DefaultTaskMaxSize = 10000
 
 func NewShoppingTxnCoordinator(coord string, ppts []string,
 	keyHashFunc twopc.KeyHashFunc, timeoutMs int64) *ShoppingTxnCoordinator {
 	sts := &ShoppingTxnCoordinator{coord: twopc.NewCoordinator("tcp", coord, ppts),
 		keyHashFunc: keyHashFunc, timeoutMs: timeoutMs,
-		shardsClient: NewShardsClient(ppts, keyHashFunc)}
+		hub:   NewShardsClientHub("tcp", ppts, keyHashFunc, 1),
+		tasks: make(chan *TxnTask, DefaultTaskMaxSize)}
+	go func() {
+		for _ = range time.Tick(time.Second * 5) {
+			ns := atomic.LoadInt64(&util.RPCCallNs)
+			fmt.Println("RPCCall cost ms:", ns/time.Millisecond.Nanoseconds(), ns)
+		}
+	}()
 	sts.coord.RegisterService(sts)
 	gob.Register(AddItemTxnInitRet{})
 	gob.Register(SubmitOrderTxnInitRet{})
 	gob.Register(PayOrderTxnInitRet{})
+	go sts.Run()
 	return sts
 }
 
@@ -31,10 +52,10 @@ func NewShoppingTxnCoordinator(coord string, ppts []string,
 func (stc *ShoppingTxnCoordinator) LoadItemList(itemsSize *int, reply *struct{}) error {
 	stc.itemList = make([]Item, 1+*itemsSize)
 	for itemID := 1; itemID <= *itemsSize; itemID++ {
-		_, reply := stc.shardsClient.Get(ItemsPriceKeyPrefix + strconv.Itoa(itemID))
+		_, reply := stc.hub.Get(ItemsPriceKeyPrefix + strconv.Itoa(itemID))
 		price, _ := strconv.Atoi(reply.Value)
 
-		_, reply = stc.shardsClient.Get(ItemsStockKeyPrefix + strconv.Itoa(itemID))
+		_, reply = stc.hub.Get(ItemsStockKeyPrefix + strconv.Itoa(itemID))
 		stock, _ := strconv.Atoi(reply.Value)
 
 		stc.itemList[itemID] = Item{ID: itemID, Price: price, Stock: stock}
@@ -62,15 +83,14 @@ type AddItemTxnInitArgs struct {
 type AddItemTxnInitRet AddItemTxnInitArgs
 
 func AddItemTxnInit(args interface{}) (ret interface{}, errCode int) {
-
 	initArgs := args.(AddItemTxnInitArgs)
 	ret = AddItemTxnInitRet(initArgs)
 	errCode = 0
 	return
 }
 
-// StartAddItemTxn starts the transcation of adding item to cart.
-func (stc *ShoppingTxnCoordinator) StartAddItemTxn(args *AddItemArgs, txnID *string) error {
+// AsyncAddItemTxn starts the transcation of adding item to cart.
+func (stc *ShoppingTxnCoordinator) AsyncAddItemTxn(args *AddItemArgs, txnID *string) error {
 	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
 	orderKey := OrderKeyPrefix + args.UserToken
 
@@ -85,13 +105,22 @@ func (stc *ShoppingTxnCoordinator) StartAddItemTxn(args *AddItemArgs, txnID *str
 
 	txn.AddTxnPart(cartDetailKey, "CartAddItem")
 
-	addItemTxnInitArgs := AddItemTxnInitArgs{OrderKey: orderKey,
+	initArgs := AddItemTxnInitArgs{OrderKey: orderKey,
 		CartItemNumKey: cartItemNumKey, CartDetailKey: cartDetailKey,
 		CartIDStr: args.CartIDStr, ItemID: args.ItemID,
 		AddItemCnt: args.AddItemCnt}
-	fmt.Println("StartAddItemTxn", addItemTxnInitArgs)
-	txn.Start(addItemTxnInitArgs)
+	fmt.Println("AsyncAddItemTxn", initArgs)
+	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
 	return nil
+}
+
+func (stc *ShoppingTxnCoordinator) Run() {
+	for task := range stc.tasks {
+		task.txn.Start(task.initArgs)
+		var reply twopc.TxnState
+		stc.coord.SyncTxnEnd(&task.txn.ID, &reply)
+		fmt.Println("process", reply.State, reply.ErrCode)
+	}
 }
 
 // SubmitOrderArgs is the argument of the SubmitOrderTrans function.
@@ -102,7 +131,7 @@ type SubmitOrderArgs struct {
 
 type SubmitOrderTxnInitArgs struct {
 	stc            *ShoppingTxnCoordinator
-	client         *ShardsClient
+	hub            *ShardsClientHub
 	OrderKey       string
 	CartIDStr      string
 	CartItemNumKey string
@@ -118,7 +147,7 @@ type SubmitOrderTxnInitRet struct {
 func SubmitOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	initArgs := args.(*SubmitOrderTxnInitArgs)
 
-	ok, reply := initArgs.client.Get(initArgs.CartDetailKey)
+	ok, reply := initArgs.hub.Get(initArgs.CartDetailKey)
 	if !ok {
 		errCode = -3
 	}
@@ -134,8 +163,8 @@ func SubmitOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	return
 }
 
-// StartOrderTxn starts the transcation of submiting the order.
-func (stc *ShoppingTxnCoordinator) StartSubmitOrderTxn(args *SubmitOrderArgs, txnID *string) error {
+// AsyncSubmitOrderTxn submit the transcation of submiting the order.
+func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, txnID *string) error {
 	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
 	orderKey := OrderKeyPrefix + args.UserToken
 
@@ -146,19 +175,19 @@ func (stc *ShoppingTxnCoordinator) StartSubmitOrderTxn(args *SubmitOrderArgs, tx
 
 	txn.AddTxnPart(cartItemNumKey, "CartAuthAndEmpty")
 
-	// txn.AddTxnPart(orderKey, "OrderIsSubmited")
-
 	txn.BroadcastTxnPart("ItemsStockMinus")
 
 	txn.AddTxnPart(orderKey, "OrderRecord")
 
 	// TODO?
 	// client: client,
-	initArgs := &SubmitOrderTxnInitArgs{stc: stc, client: stc.shardsClient,
+	initArgs := &SubmitOrderTxnInitArgs{stc: stc, hub: stc.hub,
 		CartIDStr: args.CartIDStr, CartItemNumKey: cartItemNumKey,
 		CartDetailKey: cartDetailKey,
 		OrderKey:      orderKey}
-	txn.Start(initArgs)
+
+	fmt.Println("AsyncSubmitOrderTxn", initArgs)
+	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
 	return nil
 }
 
@@ -169,7 +198,7 @@ type PayOrderArgs struct {
 }
 
 type PayOrderTxnInitArgs struct {
-	client         *ShardsClient
+	hub            *ShardsClientHub
 	OrderIDStr     string
 	UserToken      string
 	OrderKey       string
@@ -192,7 +221,7 @@ func PayOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	}
 
 	// Test whether the order exists, or it belongs other users.
-	ok, reply := initArgs.client.Get(initArgs.OrderKey)
+	ok, reply := initArgs.hub.Get(initArgs.OrderKey)
 	if !ok {
 		errCode = -3
 		return
@@ -215,8 +244,8 @@ func PayOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	return
 }
 
-// StartPayOrderTxn starts the transcation of paying the order.
-func (stc *ShoppingTxnCoordinator) StartPayOrderTxn(args *PayOrderArgs, txnID *string) error {
+// AsyncPayOrderTxn submit the transcation of paying the order.
+func (stc *ShoppingTxnCoordinator) AsyncPayOrderTxn(args *PayOrderArgs, txnID *string) error {
 	balanceKey := BalanceKeyPrefix + args.UserToken
 	rootBalanceKey := BalanceKeyPrefix + RootUserToken
 	orderKey := OrderKeyPrefix + args.OrderIDStr
@@ -230,9 +259,11 @@ func (stc *ShoppingTxnCoordinator) StartPayOrderTxn(args *PayOrderArgs, txnID *s
 
 	txn.AddTxnPart(orderKey, "PayRecord")
 
-	initArgs := &PayOrderTxnInitArgs{client: stc.shardsClient,
+	initArgs := &PayOrderTxnInitArgs{hub: stc.hub,
 		BalanceKey: balanceKey, RootBalanceKey: rootBalanceKey,
 		UserToken: args.UserToken, OrderIDStr: args.OrderIDStr}
-	txn.Start(initArgs)
+
+	fmt.Println("AsyncPayOrderTxn", initArgs)
+	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
 	return nil
 }

@@ -1,12 +1,14 @@
 package kv
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type KVStore struct {
@@ -18,11 +20,20 @@ type KVStore struct {
 
 	dead       int32 // for testing
 	unreliable int32 // for testing
+
+	// debug
+	costNs int64
 }
 
 // NewKVStore inits a tiny KV-Store.
 func NewKVStore() *KVStore {
 	ks := &KVStore{data: make(map[string]string)}
+	go func() {
+		for _ = range time.Tick(time.Second * 5) {
+			ns := atomic.LoadInt64(&ks.costNs)
+			fmt.Println("KVStore cost ms:", ns/time.Millisecond.Nanoseconds(), ns)
+		}
+	}()
 	return ks
 }
 
@@ -84,6 +95,11 @@ func (ks *KVStoreService) Kill() {
 }
 
 func (ks *KVStore) Put(key, value string) (oldValue string, existed bool) {
+	now := time.Now()
+	defer func() {
+		atomic.AddInt64(&ks.costNs, time.Since(now).Nanoseconds())
+	}()
+
 	ks.RwLock.Lock()
 	defer ks.RwLock.Unlock()
 	oldValue, existed = ks.data[key]
@@ -92,13 +108,24 @@ func (ks *KVStore) Put(key, value string) (oldValue string, existed bool) {
 }
 
 func (ks *KVStore) Get(key string) (value string, existed bool) {
+	now := time.Now()
+	defer func() {
+		atomic.AddInt64(&ks.costNs, time.Since(now).Nanoseconds())
+	}()
+
 	ks.RwLock.RLock()
 	defer ks.RwLock.RUnlock()
+
 	value, existed = ks.data[key]
 	return
 }
 
 func (ks *KVStore) Incr(key string, delta int) (newVal string, existed bool, err error) {
+	now := time.Now()
+	defer func() {
+		atomic.AddInt64(&ks.costNs, time.Since(now).Nanoseconds())
+	}()
+
 	ks.RwLock.Lock()
 	defer ks.RwLock.Unlock()
 	var oldVal string
@@ -117,6 +144,11 @@ func (ks *KVStore) Incr(key string, delta int) (newVal string, existed bool, err
 }
 
 func (ks *KVStore) Del(key string) (existed bool) {
+	now := time.Now()
+	defer func() {
+		atomic.AddInt64(&ks.costNs, time.Since(now).Nanoseconds())
+	}()
+
 	ks.RwLock.Lock()
 	defer ks.RwLock.Unlock()
 	if _, existed = ks.data[key]; existed {

@@ -4,4 +4,4 @@ export APP_PORT="10000"
 export ITEM_CSV="data/items.csv"
 export USER_CSV="data/users.csv"
 go build benchmark/stress.go
-if [[ $? == 0 ]] then; ./stress -d -c 300;fi
+if [[ $? == 0 ]] then; ./stress -d -c 100;fi
