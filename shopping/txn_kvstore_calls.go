@@ -54,7 +54,7 @@ type CartAuthAndValidArgs struct {
 	AddItemCnt     int
 }
 
-func (skv *ShoppingTxnKVStore) CartAuthAndValid(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
+func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
 	fmt.Println("CartAuthAndValid start:", initRet)
 	defer func() { fmt.Println("CartAuthAndValid end:", errCode) }()
 
@@ -65,58 +65,29 @@ func (skv *ShoppingTxnKVStore) CartAuthAndValid(initRet interface{}) (errCode in
 	var existed bool
 
 	// Test whether the cart belongs other users.
-	if value, existed = skv.Get(args.CartItemNumKey); !existed {
+	if value, existed = skv.Get(args.CartKey); !existed {
 		errCode = TxnNotAuth
 		return
 	}
+	num, cartDetail := parseCartValue(value)
 
 	// Test whether #items in cart exceeds 3.
-	total, _ := strconv.Atoi(value)
-	// fmt.Println("total:", total)
-	if total+args.AddItemCnt > 3 {
+	if num+args.AddItemCnt > 3 {
 		errCode = TxnItemOutOfLimit
 		return
 	}
 
-	// Increase the values about the cart.
-	skv.Incr(args.CartItemNumKey, args.AddItemCnt)
-	rbf = twopc.RollbackFunc(func() {
-		skv.Incr(args.CartItemNumKey, 0-args.AddItemCnt)
-	})
-	errCode = TxnOK
-	return
-}
-
-// type TxnIncrArgs struct {
-// 	Key   string
-// 	Delta int
-// }
-
-// func (skv *ShoppingTxnKVStore) TxnIncr(args interface{}, initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-// 	incrArgs := args.(IncrArgs)
-// 	rbf = twopc.RollbackFunc(func() {
-// 		skv.Incr(incrArgs.Key, 0-incrArgs.Delta)
-// 	})
-// 	skv.Incr(incrArgs.Key, incrArgs.Delta)
-// 	errCode = 0
-// 	return
-// }
-
-func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartAddItem start:", initRet)
-	defer func() { fmt.Println("CartAddItem end", errCode) }()
-
-	args := initRet.(AddItemTxnInitRet)
-
-	value, _ := skv.Get(args.CartDetailKey)
-	rbf = twopc.RollbackFunc(func() {
-		skv.Put(args.CartDetailKey, value)
-	})
-	cartDetail := parseCartDetail(value)
+	num += args.AddItemCnt
+	// Set the new values of the cart.
 	cartDetail[args.ItemID] += args.AddItemCnt
-	skv.Put(args.CartDetailKey, composeCartDetail(cartDetail))
+	skv.Put(args.CartKey, composeCartValue(num, cartDetail))
+	rbf = twopc.RollbackFunc(func() {
+		skv.Put(args.CartKey, value)
+	})
+
 	errCode = TxnOK
 	return
+
 }
 
 // ===============================================================================
@@ -155,13 +126,13 @@ func (skv *ShoppingTxnKVStore) CartAuthAndEmpty(initRet interface{}) (errCode in
 	var value string
 	var existed bool
 	// Test whether the cart belongs other users.
-	if value, existed = skv.Get(args.CartItemNumKey); !existed {
+	if value, existed = skv.Get(args.CartKey); !existed {
 		errCode = TxnNotAuth
 		return
 	}
 
 	// Test whether the cart is empty.
-	num, _ := strconv.Atoi(value)
+	num, _ := parseCartValue(value)
 	if num == 0 {
 		errCode = TxnCartEmpyt
 		return
@@ -194,7 +165,7 @@ func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int
 	fmt.Println("ItemsStockMinus start:", initRet)
 	defer func() { fmt.Println("ItemsStockMinus end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
-	cartDetail := parseCartDetail(args.CartDetailStr)
+	_, cartDetail := parseCartValue(args.CartValue)
 	errCode = TxnOK
 	for itemID, itemCnt := range cartDetail {
 		itemsStockKey := ItemsStockKeyPrefix + strconv.Itoa(itemID)
@@ -203,7 +174,6 @@ func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int
 			iNewValue, _ := strconv.Atoi(newValue)
 			if iNewValue < 0 {
 				errCode = TxnOutOfStock
-
 			}
 		}
 	}
@@ -212,10 +182,9 @@ func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int
 		for itemID, itemCnt := range cartDetail {
 			itemsStockKey := ItemsStockKeyPrefix + strconv.Itoa(itemID)
 			if _, existed := skv.Get(itemsStockKey); existed {
-				skv.Incr(itemsStockKey, itemCnt)
+				newValue, _, _ := skv.Incr(itemsStockKey, itemCnt)
 			}
 		}
-
 	})
 
 	return
@@ -225,9 +194,10 @@ func (skv *ShoppingTxnKVStore) OrderRecord(initRet interface{}) (errCode int, rb
 	fmt.Println("OrderRecord start:", initRet)
 	defer func() { fmt.Println("OrderRecord end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
+	num, cartDetail := parseCartValue(args.CartValue)
 
 	// Record the order and delete the cart.
-	oldValue, existed := skv.Put(args.OrderKey, composeOrderInfo(false, args.CartIDStr, args.Total))
+	oldValue, existed := skv.Put(args.OrderKey, composeOrderValue(false, args.Price, num, cartDetail))
 	if existed {
 		errCode = TxnOrderOutOfLimit
 		rbf = twopc.RollbackFunc(func() {
@@ -286,7 +256,7 @@ func (skv *ShoppingTxnKVStore) PayRecord(initRet interface{}) (errCode int, rbf 
 	args := initRet.(PayOrderTxnInitRet)
 
 	// Record the order.
-	oldValue, existed := skv.Put(args.OrderKey, args.OrderInfo)
+	oldValue, existed := skv.Put(args.OrderKey, args.OrderValue)
 
 	rbf = twopc.RollbackFunc(func() {
 		if existed {

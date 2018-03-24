@@ -72,12 +72,11 @@ type AddItemArgs struct {
 }
 
 type AddItemTxnInitArgs struct {
-	OrderKey       string
-	CartItemNumKey string
-	CartDetailKey  string
-	CartIDStr      string
-	ItemID         int
-	AddItemCnt     int
+	OrderKey   string
+	CartKey    string
+	CartIDStr  string
+	ItemID     int
+	AddItemCnt int
 }
 
 type AddItemTxnInitRet AddItemTxnInitArgs
@@ -91,7 +90,7 @@ func AddItemTxnInit(args interface{}) (ret interface{}, errCode int) {
 
 // AsyncAddItemTxn starts the transcation of adding item to cart.
 func (stc *ShoppingTxnCoordinator) AsyncAddItemTxn(args *AddItemArgs, txnID *string) error {
-	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
+	cartKey := getCartKey(args.CartIDStr, args.UserToken)
 	orderKey := OrderKeyPrefix + args.UserToken
 
 	txn := stc.coord.NewTxn(AddItemTxnInit, stc.keyHashFunc, stc.timeoutMs)
@@ -101,12 +100,10 @@ func (stc *ShoppingTxnCoordinator) AsyncAddItemTxn(args *AddItemArgs, txnID *str
 
 	txn.AddTxnPart(orderKey, "CartOrdered")
 
-	txn.AddTxnPart(cartItemNumKey, "CartAuthAndValid")
-
-	txn.AddTxnPart(cartDetailKey, "CartAddItem")
+	txn.AddTxnPart(cartKey, "CartAddItem")
 
 	initArgs := AddItemTxnInitArgs{OrderKey: orderKey,
-		CartItemNumKey: cartItemNumKey, CartDetailKey: cartDetailKey,
+		CartKey:   cartKey,
 		CartIDStr: args.CartIDStr, ItemID: args.ItemID,
 		AddItemCnt: args.AddItemCnt}
 	fmt.Println("AsyncAddItemTxn", initArgs)
@@ -130,42 +127,48 @@ type SubmitOrderArgs struct {
 }
 
 type SubmitOrderTxnInitArgs struct {
-	stc            *ShoppingTxnCoordinator
-	hub            *ShardsClientHub
-	OrderKey       string
-	CartIDStr      string
-	CartItemNumKey string
-	CartDetailKey  string
+	stc       *ShoppingTxnCoordinator
+	hub       *ShardsClientHub
+	OrderKey  string
+	CartIDStr string
+	CartKey   string
 }
 
 type SubmitOrderTxnInitRet struct {
 	SubmitOrderTxnInitArgs
-	CartDetailStr string
-	Total         int
+	CartValue string
+	Price     int
 }
 
 func SubmitOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	initArgs := args.(*SubmitOrderTxnInitArgs)
 
-	ok, reply := initArgs.hub.Get(initArgs.CartDetailKey)
+	ok, reply := initArgs.hub.Get(initArgs.CartKey)
 	if !ok {
 		errCode = -3
+		return
 	}
-	cartDetailStr := reply.Value
-	cartDetail := parseCartDetail(cartDetailStr)
-	total := 0
-	for itemID, itemCnt := range cartDetail {
-		total += itemCnt * initArgs.stc.itemList[itemID].Price
+	cartValue := reply.Value
+	price := 0
+	if cartValue != "" {
+		_, cartDetail := parseCartValue(cartValue)
+		for itemID, itemCnt := range cartDetail {
+			price += itemCnt * initArgs.stc.itemList[itemID].Price
+		}
 	}
+	// if cartValue == 0, we don't know it's TxnNotFound or TxnNotAuth,
+	// so we move on. In two cases, make sure there is no runtime errors
+	// in ItemsStockMinus and OrderRecord .
+
 	ret = &SubmitOrderTxnInitRet{SubmitOrderTxnInitArgs: *initArgs,
-		CartDetailStr: cartDetailStr, Total: total}
+		CartValue: cartValue, Price: price}
 	errCode = 0
 	return
 }
 
 // AsyncSubmitOrderTxn submit the transcation of submiting the order.
 func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, txnID *string) error {
-	cartItemNumKey, cartDetailKey := getCartKeys(args.CartIDStr, args.UserToken)
+	cartKey := getCartKey(args.CartIDStr, args.UserToken)
 	orderKey := OrderKeyPrefix + args.UserToken
 
 	txn := stc.coord.NewTxn(SubmitOrderTxnInit, stc.keyHashFunc, stc.timeoutMs)
@@ -173,7 +176,7 @@ func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, tx
 
 	txn.AddTxnPart(CartIDMaxKey, "CartExist2")
 
-	txn.AddTxnPart(cartItemNumKey, "CartAuthAndEmpty")
+	txn.AddTxnPart(cartKey, "CartAuthAndEmpty")
 
 	txn.BroadcastTxnPart("ItemsStockMinus")
 
@@ -182,9 +185,8 @@ func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, tx
 	// TODO?
 	// client: client,
 	initArgs := &SubmitOrderTxnInitArgs{stc: stc, hub: stc.hub,
-		CartIDStr: args.CartIDStr, CartItemNumKey: cartItemNumKey,
-		CartDetailKey: cartDetailKey,
-		OrderKey:      orderKey}
+		CartIDStr: args.CartIDStr, CartKey: cartKey,
+		OrderKey: orderKey}
 
 	fmt.Println("AsyncSubmitOrderTxn", initArgs)
 	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
@@ -208,8 +210,8 @@ type PayOrderTxnInitArgs struct {
 
 type PayOrderTxnInitRet struct {
 	PayOrderTxnInitArgs
-	OrderInfo string
-	Delta     int
+	OrderValue string
+	Delta      int
 }
 
 func PayOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
@@ -232,14 +234,14 @@ func PayOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	}
 
 	// Test whether the order have been paid.
-	hasPaid, CartIDStr, total := parseOrderInfo(reply.Value)
+	hasPaid, price, num, detail := parseOrderValue(reply.Value)
 	if hasPaid {
 		errCode = TxnOrderPaid
 		return
 	}
-	orderInfo := composeOrderInfo(true, CartIDStr, total)
+	orderValue := composeOrderValue(true, price, num, detail)
 	ret = PayOrderTxnInitRet{PayOrderTxnInitArgs: *initArgs,
-		OrderInfo: orderInfo, Delta: total}
+		OrderValue: orderValue, Delta: price}
 	errCode = 0
 	return
 }

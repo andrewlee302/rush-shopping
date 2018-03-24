@@ -23,7 +23,6 @@ def test_make_order():
 
     # make order success
     res = make_order(uid, token, cart_id, item_items)
-    print uid, token, cart_id, item_items
     assert res.status_code == 200
     order_id = res.json()["order_id"]
     assert len(order_id) > 0
@@ -42,7 +41,6 @@ def test_make_order():
 
     # test only one order can be made
     res2 = make_order(uid, token, cart_id, item_items)
-    print uid, token, cart_id, item_items
     assert res2.status_code == 403
     assert res2.json() == {"code": "ORDER_OUT_OF_LIMIT",
                            "message": u"每个用户只能下一单"}
@@ -54,7 +52,6 @@ def test_make_order_cart_not_owned_error():
     _, token2 = next(token_gen)
 
     res = make_order(uid, token2, cart_id1, [next(item_gen)])
-    print uid, token2, cart_id1
     assert res.status_code == 401
     assert res.json() == {"code": "NOT_AUTHORIZED_TO_ACCESS_CART",
                           "message": u"无权限访问指定的篮子"}

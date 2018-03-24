@@ -32,13 +32,11 @@ func NewShoppingTxnKVStoreService(network, addr, coordAddr string) *ShoppingTxnK
 	gob.Register(AddItemTxnInitRet{})
 	ppt.RegisterCaller(twopc.CallFunc(sks.CartExist), "CartExist")
 	ppt.RegisterCaller(twopc.CallFunc(sks.CartOrdered), "CartOrdered")
-	ppt.RegisterCaller(twopc.CallFunc(sks.CartAuthAndValid), "CartAuthAndValid")
 	ppt.RegisterCaller(twopc.CallFunc(sks.CartAddItem), "CartAddItem")
 
 	gob.Register(SubmitOrderTxnInitRet{})
 	ppt.RegisterCaller(twopc.CallFunc(sks.CartExist2), "CartExist2")
 	ppt.RegisterCaller(twopc.CallFunc(sks.CartAuthAndEmpty), "CartAuthAndEmpty")
-	// ppt.RegisterCaller(twopc.CallFunc(sks.OrderIsSubmited), "OrderIsSubmited")
 	ppt.RegisterCaller(twopc.CallFunc(sks.ItemsStockMinus), "ItemsStockMinus")
 	ppt.RegisterCaller(twopc.CallFunc(sks.OrderRecord), "OrderRecord")
 

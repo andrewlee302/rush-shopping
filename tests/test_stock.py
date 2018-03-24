@@ -20,7 +20,6 @@ def buy_to_stock(item_id, target_stock):
         res = simple_make_order([{"item_id": item_id, "count": count}])
 
         # should success when item have remain stock
-        print {"item_id": item_id, "count": count}
         assert res.status_code == 200
 
         remain_stock -= count
@@ -33,9 +32,6 @@ def test_item_stock_consistency():
 
     # should fail when item out of stock
     res = simple_make_order([{"item_id": item_id, "count": 1}])
-    print "item_id", item_id
-    if res.status_code != 403:
-        print "403:", item_id
     assert res.status_code == 403
     assert res.json() == {"code": "ITEM_OUT_OF_STOCK",
                           "message": u"物品库存不足"}
@@ -127,5 +123,4 @@ def test_item_not_oversold_under_concurrent():
 
     # test not oversold
     for item_id in test_item_ids:
-        # print("stock %s -> %s" % (item_id, item_store[item_id]["stock"]))
         assert item_store[item_id]["stock"] >= 0

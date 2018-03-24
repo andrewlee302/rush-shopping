@@ -30,7 +30,6 @@ def test_add_item():
 
     # fail if try to add more
     res = json_patch("/carts/%s" % cart_id, token, next(item_gen))
-    # print ("/carts/%s" % cart_id, token, next(item_gen))
     assert res.status_code == 403
     assert res.json() == {"code": "ITEM_OUT_OF_LIMIT",
                           "message": u"篮子中物品数量超过了三个"}
@@ -79,7 +78,6 @@ def test_cart_not_owned_error():
     cart_id2 = new_cart(token2)
 
     res = json_patch("/carts/%s" % cart_id2, token1, next(item_gen))
-    print ("/carts/%s" % cart_id2, token1, next(item_gen))
     assert res.status_code == 401
     assert res.json() == {"code": "NOT_AUTHORIZED_TO_ACCESS_CART",
                           "message": u"无权限访问指定的篮子"}

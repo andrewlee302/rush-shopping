@@ -3,6 +3,7 @@ package shopping
 import (
 	"distributed-system/twopc"
 	"distributed-system/util"
+	"net/rpc"
 	"rush-shopping/kv"
 )
 
@@ -18,16 +19,16 @@ func NewCoordClients(network, addr string, size int) *CoordClients {
 }
 
 func (cs *CoordClients) SyncTxn(txnID string) (errCode int) {
-	return 0
-	// var reply twopc.TxnState
-	// c := cs.pool.Get().(*rpc.Client)
-	// defer cs.pool.Put(c)
+	// return 0
+	var reply twopc.TxnState
+	c := cs.pool.Get().(*rpc.Client)
+	defer cs.pool.Put(c)
 
-	// call := c.Go("Coordinator.SyncTxnEnd", &txnID, &reply, nil)
-	// <-call.Done
+	call := c.Go("Coordinator.SyncTxnEnd", &txnID, &reply, nil)
+	<-call.Done
 
-	// errCode = reply.ErrCode
-	// return
+	errCode = reply.ErrCode
+	return
 }
 
 func (cs *CoordClients) AsyncAddItemTxn(cartIDStr, userToken string, itemID,

@@ -7,7 +7,6 @@ package shopping
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -55,10 +54,8 @@ type UserIDAndPass struct {
 	Password string
 }
 
-// Retrun the item-num-key and content-key in kvstore.
-func getCartKeys(cartIDStr, token string) (cartItemNumKey, cartDetailKey string) {
-	cartItemNumKey = "cart_n:" + cartIDStr + ":" + token
-	cartDetailKey = "cart_d:" + cartIDStr + ":" + token
+func getCartKey(cartIDStr, token string) (cartKey string) {
+	cartKey = "cart:" + cartIDStr + ":" + token
 	return
 }
 
@@ -74,57 +71,78 @@ func token2UserID(token string) int {
 	}
 }
 
-func composeOrderInfo(hasPaid bool, cartIDStr string, total int) string {
+func composeOrderValue(hasPaid bool, price, num int, detail map[int]int) string {
 	var info [3]string
 	if hasPaid {
 		info[0] = OrderPaidFlag
 	} else {
 		info[0] = OrderUnpaidFlag
 	}
-	info[1] = cartIDStr
-	info[2] = strconv.Itoa(total)
-	return strings.Join(info[:], ",")
+	info[1] = strconv.Itoa(price)
+	info[2] = composeCartValue(num, detail)
+	return strings.Join(info[:], "|")
 }
 
-func parseOrderInfo(orderInfo string) (hasPaid bool, cartIDStr string, total int) {
-	info := strings.Split(orderInfo, ",")
+func parseOrderValue(value string) (hasPaid bool, price, num int, detail map[int]int) {
+	info := strings.Split(value, "|")
 	if info[0] == OrderPaidFlag {
 		hasPaid = true
 	} else {
 		hasPaid = false
 	}
-	cartIDStr = info[1]
-	total, _ = strconv.Atoi(info[2])
+
+	price, _ = strconv.Atoi(info[1])
+	num, detail = parseCartValue(info[2])
 	return
 }
 
-// if is detailStr is "", return the init map.
-func parseCartDetail(cartDetailStr string) (detail map[int]int) {
+// cartValue shouldn't be "". Otherwise return 0, blank map.
+// 2.1:3;2:4
+// 0
+func parseCartValue(cartValue string) (num int, detail map[int]int) {
 	detail = make(map[int]int)
-	if cartDetailStr == "" {
-		return
+	if cartValue == "" {
+		return 0, detail
 	}
-	itemStrs := strings.Split(cartDetailStr, ";")
-	for _, itemStr := range itemStrs {
-		info := strings.Split(itemStr, ":")
-		if len(info) != 2 {
-			fmt.Println("here", len(cartDetailStr), itemStr, len(itemStrs))
+	vs := strings.Split(cartValue, ".")
+	num, _ = strconv.Atoi(vs[0])
+	cnt := 0
+	if len(vs) == 2 {
+		itemStrs := strings.Split(vs[1], ";")
+		for _, itemStr := range itemStrs {
+			info := strings.Split(itemStr, ":")
+			if len(info) != 2 {
+				panic("cartValue format error")
+			}
+			itemID, _ := strconv.Atoi(info[0])
+			itemCnt, _ := strconv.Atoi(info[1])
+			cnt += itemCnt
+			detail[itemID] = itemCnt
 		}
-		itemID, _ := strconv.Atoi(info[0])
-		itemCnt, _ := strconv.Atoi(info[1])
-		detail[itemID] = itemCnt
+	} else if len(vs) > 2 {
+		panic("cartValue format error")
+	}
+
+	if num != cnt {
+		panic("total value error")
 	}
 	return
 }
 
-func composeCartDetail(cartDetail map[int]int) (cartDetailStr string) {
+func composeCartValue(num int, cartDetail map[int]int) (cartDetailStr string) {
+	cnt := 0
 	var buffer bytes.Buffer
+	buffer.WriteString(strconv.Itoa(num) + ".")
 	for itemID, itemCnt := range cartDetail {
+		cnt += itemCnt
 		buffer.WriteString(strconv.Itoa(itemID))
 		buffer.WriteString(":")
 		buffer.WriteString(strconv.Itoa(itemCnt))
 		buffer.WriteString(";")
 	}
 	buffer.Truncate(buffer.Len() - 1)
+	if num != cnt {
+		panic("total value error")
+	}
 	return buffer.String()
 }

@@ -269,8 +269,8 @@ func (ss *ShopServer) createCart(writer http.ResponseWriter, req *http.Request) 
 	_, reply := ss.clientHub.Incr(CartIDMaxKey, 1)
 	cartIDStr := reply.Value
 
-	cartItemNumKey, _ := getCartKeys(cartIDStr, token)
-	_, reply = ss.clientHub.Put(cartItemNumKey, "0")
+	cartKey := getCartKey(cartIDStr, token)
+	_, reply = ss.clientHub.Put(cartKey, "0")
 
 	writer.WriteHeader(http.StatusOK)
 	writer.Write([]byte("{\"cart_id\": \"" + cartIDStr + "\"}"))
@@ -502,21 +502,17 @@ func (ss *ShopServer) queryOneOrder(writer http.ResponseWriter, req *http.Reques
 		writer.Write([]byte("[]"))
 		return
 	}
-	hasPaid, cartIDStr, total := parseOrderInfo(reply.Value)
-	_, cartDetailKey := getCartKeys(cartIDStr, token)
-
-	_, reply = ss.clientHub.Get(cartDetailKey)
-	itemIDAndCounts := parseCartDetail(reply.Value)
+	hasPaid, price, _, detail := parseOrderValue(reply.Value)
 
 	var orders [1]Order
 	order := &orders[0]
-	itemNum := len(itemIDAndCounts) // it cannot be zero.
+	itemNum := len(detail) // it cannot be zero.
 	order.HasPaid = hasPaid
 	order.IDStr = token
 	order.Items = make([]ItemCount, itemNum)
-	order.Total = total
+	order.Total = price
 	cnt := 0
-	for itemID, itemCnt := range itemIDAndCounts {
+	for itemID, itemCnt := range detail {
 		if itemCnt != 0 {
 			order.Items[cnt].ItemID = itemID
 			order.Items[cnt].Count = itemCnt
