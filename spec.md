@@ -217,7 +217,7 @@ PATCH /carts/e0c68eb96bd8495dbb8fcd8e86fc48a3?access_token=xxx
 ## 下单
 
 `POST /orders`
-下单成功后，购物车将会释放。
+下单成功后，购物车将不会释放，用户可以继续修改。
 
 ##### 请求体
 

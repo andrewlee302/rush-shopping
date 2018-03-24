@@ -311,39 +311,44 @@ func (ss *ShopServer) addItem(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// fmt.Println("addItemTrans")
-
-	_, txnID := ss.coordClients.AsyncAddItemTxn(cartIDStr, token, item.ItemID, item.Count)
-	errCode := ss.coordClients.SyncTxn(txnID)
-	flag := normalizeErrCode(errCode)
-
-	// ss.coordClients.StartAddItemTxn(cartIDStr, token, item.ItemID, item.Count)
-	// flag := TxnOK
-
-	// fmt.Println("addItem", cartIDStr, token, item.ItemID, item.Count, flag)
-
-	switch flag {
-	case TxnOK:
-		{
-			writer.WriteHeader(http.StatusNoContent)
-		}
-	case TxnNotFound:
-		{
+	// Test whether the cart exists,
+	var maxCartID = 0
+	_, reply := ss.clientHub.Get(CartIDMaxKey)
+	if reply.Flag {
+		maxCartID, _ = strconv.Atoi(reply.Value)
+		if cartID > maxCartID || cartID < 1 {
 			writer.WriteHeader(http.StatusNotFound)
 			writer.Write(CART_NOT_FOUND_MSG)
+			return
 		}
-	case TxnNotAuth:
-		{
-			writer.WriteHeader(http.StatusUnauthorized)
-			writer.Write(NOT_AUTHORIZED_CART_MSG)
-		}
-	case TxnItemOutOfLimit:
-		{
-			writer.WriteHeader(http.StatusForbidden)
-			writer.Write(ITEM_OUT_OF_LIMIT_MSG)
-		}
+	} else {
+		writer.WriteHeader(http.StatusNotFound)
+		writer.Write(CART_NOT_FOUND_MSG)
+		return
 	}
-	// fmt.Println("addItem", flag)
+
+	cartKey := getCartKey(cartIDStr, token)
+	// Test whether the cart belongs other users.
+	_, reply = ss.clientHub.Get(cartKey)
+	if !reply.Flag {
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write(NOT_AUTHORIZED_CART_MSG)
+		return
+	}
+	num, cartDetail := parseCartValue(reply.Value)
+
+	// Test whether #items in cart exceeds 3.
+	if num+item.Count > 3 {
+		writer.WriteHeader(http.StatusForbidden)
+		writer.Write(ITEM_OUT_OF_LIMIT_MSG)
+		return
+	}
+
+	num += item.Count
+	// Set the new values of the cart.
+	cartDetail[item.ItemID] += item.Count
+	ss.clientHub.Put(cartKey, composeCartValue(num, cartDetail))
+	writer.WriteHeader(http.StatusNoContent)
 	return
 }
 

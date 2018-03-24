@@ -32,23 +32,6 @@ func (skv *ShoppingTxnKVStore) CartExist(initRet interface{}) (errCode int, rbf 
 	return
 }
 
-func (skv *ShoppingTxnKVStore) CartOrdered(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartOrdered start:", initRet)
-	defer fmt.Println("CartOrdered end", errCode)
-
-	args := initRet.(AddItemTxnInitRet)
-	rbf = twopc.BlankRollbackFunc
-
-	var existed bool
-	// Test whether the cart has been ordered.
-	if _, existed = skv.Get(args.OrderKey); existed {
-		errCode = TxnNotFound
-		return
-	}
-	errCode = TxnOK
-	return
-}
-
 type CartAuthAndValidArgs struct {
 	CartItemNumKey string
 	AddItemCnt     int
@@ -87,7 +70,6 @@ func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rb
 
 	errCode = TxnOK
 	return
-
 }
 
 // ===============================================================================
@@ -182,7 +164,7 @@ func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int
 		for itemID, itemCnt := range cartDetail {
 			itemsStockKey := ItemsStockKeyPrefix + strconv.Itoa(itemID)
 			if _, existed := skv.Get(itemsStockKey); existed {
-				newValue, _, _ := skv.Incr(itemsStockKey, itemCnt)
+				skv.Incr(itemsStockKey, itemCnt)
 			}
 		}
 	})
