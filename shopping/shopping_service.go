@@ -83,7 +83,7 @@ var (
 	ORDER_OUT_OF_LIMIT_MSG   = []byte("{\"code\": \"ORDER_OUT_OF_LIMIT\",\"message\": \"每个用户只能下一单\"}")
 
 	ORDER_NOT_FOUND_MSG      = []byte("{\"code\": \"ORDER_NOT_FOUND\", \"message\": \"篮子不存在\"}")
-	NOT_AUTHORIZED_ORDER_MSG = []byte("{\"code\": \"NOT_AUTHORIZED_TO_ACCESS_ORDER\",\"message\": \"无权限访问指定的篮子\"}")
+	NOT_AUTHORIZED_ORDER_MSG = []byte("{\"code\": \"NOT_AUTHORIZED_TO_ACCESS_ORDER\",\"message\": \"无权限访问指定的订单\"}")
 	ORDER_PAID_MSG           = []byte("{\"code\": \"ORDER_PAID\",\"message\": \"订单已支付\"}")
 	BALANCE_INSUFFICIENT_MSG = []byte("{\"code\": \"BALANCE_INSUFFICIENT\",\"message\": \"余额不足\"}")
 )
@@ -303,39 +303,12 @@ func (ss *ShopServer) addItem(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	cartIDStr := strings.Split(req.URL.Path, "/")[2]
-	cartID, _ := strconv.Atoi(cartIDStr)
-
-	if cartID < 1 {
-		writer.WriteHeader(http.StatusNotFound)
-		writer.Write(CART_NOT_FOUND_MSG)
-		return
-	}
-
-	// Test whether the cart exists,
-	var maxCartID = 0
-	_, reply := ss.clientHub.Get(CartIDMaxKey)
-	if reply.Flag {
-		maxCartID, _ = strconv.Atoi(reply.Value)
-		if cartID > maxCartID || cartID < 1 {
-			writer.WriteHeader(http.StatusNotFound)
-			writer.Write(CART_NOT_FOUND_MSG)
-			return
-		}
-	} else {
-		writer.WriteHeader(http.StatusNotFound)
-		writer.Write(CART_NOT_FOUND_MSG)
-		return
-	}
-
 	cartKey := getCartKey(cartIDStr, token)
-	// Test whether the cart belongs other users.
-	_, reply = ss.clientHub.Get(cartKey)
-	if !reply.Flag {
-		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write(NOT_AUTHORIZED_CART_MSG)
+	existed, cartValue := ss.checkCartExist(cartIDStr, cartKey, writer, req)
+	if !existed {
 		return
 	}
-	num, cartDetail := parseCartValue(reply.Value)
+	num, cartDetail := parseCartValue(cartValue)
 
 	// Test whether #items in cart exceeds 3.
 	if num+item.Count > 3 {
@@ -381,43 +354,35 @@ func (ss *ShopServer) submitOrder(writer http.ResponseWriter, req *http.Request)
 		return
 	}
 	cartIDStr := cartIDJson.IDStr
-	cartID, _ := strconv.Atoi(cartIDStr)
-
-	if cartID < 1 {
-		writer.WriteHeader(http.StatusNotFound)
-		writer.Write(CART_NOT_FOUND_MSG)
+	cartKey := getCartKey(cartIDStr, token)
+	existed, cartValue := ss.checkCartExist(cartIDStr, cartKey, writer, req)
+	if !existed {
 		return
 	}
+
+	// Test whether the cart is empty.
+	num, _ := parseCartValue(cartValue)
+	if num == 0 {
+		writer.WriteHeader(http.StatusForbidden)
+		writer.Write(CART_EMPTY)
+		return
+	}
+
+	// ss.coordClients.AsyncSubmitOrderTxn(cartIDStr, token)
+
+	// writer.WriteHeader(http.StatusOK)
+	// writer.Write([]byte("{\"order_id\": \"" + token + "\"}"))
+	// return
 
 	_, txnID := ss.coordClients.AsyncSubmitOrderTxn(cartIDStr, token)
 	errCode := ss.coordClients.SyncTxn(txnID)
 	flag := normalizeErrCode(errCode)
-
-	// ss.coordClients.StartSubmitOrderTxn(cartIDStr, token)
-	// flag := TxnOK
-
-	// fmt.Println("submit", cartIDStr, token, flag)
-
+	// fmt.Println("submitOrder", flag)
 	switch flag {
 	case TxnOK:
 		{
 			writer.WriteHeader(http.StatusOK)
 			writer.Write([]byte("{\"order_id\": \"" + token + "\"}"))
-		}
-	case TxnNotFound:
-		{
-			writer.WriteHeader(http.StatusNotFound)
-			writer.Write(CART_NOT_FOUND_MSG)
-		}
-	case TxnNotAuth:
-		{
-			writer.WriteHeader(http.StatusUnauthorized)
-			writer.Write(NOT_AUTHORIZED_CART_MSG)
-		}
-	case TxnCartEmpyt:
-		{
-			writer.WriteHeader(http.StatusForbidden)
-			writer.Write(CART_EMPTY)
 		}
 	case TxnOutOfStock:
 		{
@@ -451,31 +416,44 @@ func (ss *ShopServer) payOrder(writer http.ResponseWriter, req *http.Request) {
 		writer.Write(MALFORMED_JSON_MSG)
 		return
 	}
-	orderIDStr := orderIDJson.IDStr
 
-	_, txnID := ss.coordClients.AsyncPayOrderTxn(orderIDStr, token)
+	orderIDStr := orderIDJson.IDStr
+	if orderIDStr != token {
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write(NOT_AUTHORIZED_ORDER_MSG)
+		return
+	}
+
+	orderKey := OrderKeyPrefix + orderIDStr
+	// Test whether the order exists, or it belongs other users.
+	_, reply := ss.clientHub.Get(orderKey)
+	if !reply.Flag {
+		writer.WriteHeader(http.StatusNotFound)
+		writer.Write(ORDER_NOT_FOUND_MSG)
+		return
+	}
+
+	// Test whether the order have been paid.
+	hasPaid, price, _, _ := parseOrderValue(reply.Value)
+	if hasPaid {
+		writer.WriteHeader(http.StatusForbidden)
+		writer.Write(ORDER_PAID_MSG)
+		return
+	}
+
+	// ss.coordClients.AsyncPayOrderTxn(orderIDStr, token, price)
+	// writer.WriteHeader(http.StatusNoContent)
+	// return
+
+	_, txnID := ss.coordClients.AsyncPayOrderTxn(orderIDStr, token, price)
 	errCode := ss.coordClients.SyncTxn(txnID)
 	flag := normalizeErrCode(errCode)
-
-	// ss.coordClients.StartSubmitOrderTxn(orderIDStr, token)
-	// flag := TxnOK
-
-	// fmt.Println("payOrder", orderIDStr, token, flag)
-
+	// fmt.Println("payOrder", flag)
 	switch flag {
 	case TxnOK:
 		{
-			writer.WriteHeader(http.StatusNoContent)
-		}
-	case TxnNotFound:
-		{
-			writer.WriteHeader(http.StatusNotFound)
-			writer.Write(ORDER_NOT_FOUND_MSG)
-		}
-	case TxnNotAuth:
-		{
-			writer.WriteHeader(http.StatusUnauthorized)
-			writer.Write(NOT_AUTHORIZED_ORDER_MSG)
+			writer.WriteHeader(http.StatusOK)
+			writer.Write([]byte("{\"order_id\": \"" + token + "\"}"))
 		}
 	case TxnOrderPaid:
 		{
@@ -488,7 +466,7 @@ func (ss *ShopServer) payOrder(writer http.ResponseWriter, req *http.Request) {
 			writer.Write(BALANCE_INSUFFICIENT_MSG)
 		}
 	}
-	// fmt.Println("payOrder", flag)
+
 	return
 }
 
@@ -608,6 +586,41 @@ func (ss *ShopServer) authorize(writer http.ResponseWriter, req *http.Request, h
 	return true, authUserIDStr
 }
 
+func (ss *ShopServer) checkCartExist(cartIDStr, cartKey string, writer http.ResponseWriter, req *http.Request) (flag bool, cartValue string) {
+	flag = false
+	cartID, _ := strconv.Atoi(cartIDStr)
+	if cartID < 1 {
+		writer.WriteHeader(http.StatusNotFound)
+		writer.Write(CART_NOT_FOUND_MSG)
+		return
+	}
+	// Test whether the cart exists,
+	var maxCartID = 0
+	_, reply := ss.clientHub.Get(CartIDMaxKey)
+	if reply.Flag {
+		maxCartID, _ = strconv.Atoi(reply.Value)
+		if cartID > maxCartID || cartID < 1 {
+			writer.WriteHeader(http.StatusNotFound)
+			writer.Write(CART_NOT_FOUND_MSG)
+			return
+		}
+	} else {
+		writer.WriteHeader(http.StatusNotFound)
+		writer.Write(CART_NOT_FOUND_MSG)
+		return
+	}
+	// Test whether the cart belongs other users.
+	_, reply = ss.clientHub.Get(cartKey)
+	if !reply.Flag {
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write(NOT_AUTHORIZED_CART_MSG)
+		return
+	}
+	flag = true
+	cartValue = reply.Value
+	return
+}
+
 const PARSE_BUFF_INIT_LEN = 128
 
 func isBodyEmpty(writer http.ResponseWriter, req *http.Request) (bool, []byte) {
@@ -635,7 +648,7 @@ func isBodyEmpty(writer http.ResponseWriter, req *http.Request) (bool, []byte) {
 }
 
 func normalizeErrCode(errCode int) int {
-	fmt.Println("normalizeErrCode", errCode)
+	// fmt.Println("normalizeErrCode", errCode)
 	if errCode <= 0 {
 		return errCode
 	}

@@ -47,8 +47,8 @@ func (cs *CoordClients) AsyncSubmitOrderTxn(cartIDStr,
 }
 
 func (cs *CoordClients) AsyncPayOrderTxn(orderIDStr,
-	userToken string) (ok bool, txnID string) {
-	args := &PayOrderArgs{OrderIDStr: orderIDStr, UserToken: userToken}
+	userToken string, delta int) (ok bool, txnID string) {
+	args := &PayOrderArgs{OrderIDStr: orderIDStr, UserToken: userToken, Delta: delta}
 	ok = util.RPCPoolCall(cs.pool, "ShoppingTxnCoordinator.AsyncPayOrderTxn", args, &txnID)
 	return
 }

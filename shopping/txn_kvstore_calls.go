@@ -7,8 +7,8 @@ import (
 )
 
 func (skv *ShoppingTxnKVStore) CartExist(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartExist start", initRet)
-	defer fmt.Println("CartExist end", errCode)
+	// fmt.Println("CartExist start", initRet)
+	// defer fmt.Println("CartExist end", errCode)
 	args := initRet.(AddItemTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
 
@@ -32,14 +32,9 @@ func (skv *ShoppingTxnKVStore) CartExist(initRet interface{}) (errCode int, rbf 
 	return
 }
 
-type CartAuthAndValidArgs struct {
-	CartItemNumKey string
-	AddItemCnt     int
-}
-
 func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartAuthAndValid start:", initRet)
-	defer func() { fmt.Println("CartAuthAndValid end:", errCode) }()
+	// fmt.Println("CartAuthAndValid start:", initRet)
+	// defer func() { fmt.Println("CartAuthAndValid end:", errCode) }()
 
 	args := initRet.(AddItemTxnInitRet)
 	rbf = twopc.BlankRollbackFunc
@@ -73,79 +68,11 @@ func (skv *ShoppingTxnKVStore) CartAddItem(initRet interface{}) (errCode int, rb
 }
 
 // ===============================================================================
-func (skv *ShoppingTxnKVStore) CartExist2(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartExist2 start:", initRet)
-	defer func() { fmt.Println("CartExist2 end:", errCode) }()
-	args := initRet.(SubmitOrderTxnInitRet)
-	rbf = twopc.BlankRollbackFunc
-
-	var value string
-	var existed bool
-
-	cartID, _ := strconv.Atoi(args.CartIDStr)
-	// Test whether the cart exists,
-	var maxCartID = 0
-	if value, existed = skv.Get(CartIDMaxKey); existed {
-		maxCartID, _ = strconv.Atoi(value)
-		if cartID > maxCartID || cartID < 1 {
-			errCode = TxnNotFound
-			return
-		}
-	} else {
-		errCode = TxnNotFound
-		return
-	}
-	errCode = TxnOK
-	return
-}
-
-func (skv *ShoppingTxnKVStore) CartAuthAndEmpty(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("CartAuthAndEmpty start:", initRet)
-	defer func() { fmt.Println("CartAuthAndEmpty end:", errCode) }()
-	args := initRet.(SubmitOrderTxnInitRet)
-	rbf = twopc.BlankRollbackFunc
-
-	var value string
-	var existed bool
-	// Test whether the cart belongs other users.
-	if value, existed = skv.Get(args.CartKey); !existed {
-		errCode = TxnNotAuth
-		return
-	}
-
-	// Test whether the cart is empty.
-	num, _ := parseCartValue(value)
-	if num == 0 {
-		errCode = TxnCartEmpyt
-		return
-	}
-	errCode = TxnOK
-	return
-}
-
-// func (skv *ShoppingTxnKVStore) OrderIsSubmited(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-// 	fmt.Println("OrderIsSubmited start:", initRet)
-// 	defer func() { fmt.Println("OrderIsSubmited end:", errCode) }()
-
-// 	args := initRet.(SubmitOrderTxnInitRet)
-// 	rbf = twopc.BlankRollbackFunc
-
-// var existed bool
-
-// 	// Test whether the user has submited an order.
-// 	if _, existed = skv.Get(args.OrderKey); existed {
-// 		errCode = TxnOrderOutOfLimit
-// 		return
-// 	}
-// 	errCode = TxnOK
-// 	return
-// }
-
 // Broadcast mode
 // Must check whether the key does exist or not.
 func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("ItemsStockMinus start:", initRet)
-	defer func() { fmt.Println("ItemsStockMinus end:", errCode) }()
+	// fmt.Println("ItemsStockMinus start:", initRet)
+	// defer func() { fmt.Println("ItemsStockMinus end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
 	_, cartDetail := parseCartValue(args.CartValue)
 	errCode = TxnOK
@@ -173,8 +100,8 @@ func (skv *ShoppingTxnKVStore) ItemsStockMinus(initRet interface{}) (errCode int
 }
 
 func (skv *ShoppingTxnKVStore) OrderRecord(initRet interface{}) (errCode int, rbf twopc.Rollbacker) {
-	fmt.Println("OrderRecord start:", initRet)
-	defer func() { fmt.Println("OrderRecord end:", errCode) }()
+	// fmt.Println("OrderRecord start:", initRet)
+	// defer func() { fmt.Println("OrderRecord end:", errCode) }()
 	args := initRet.(SubmitOrderTxnInitRet)
 	num, cartDetail := parseCartValue(args.CartValue)
 
@@ -237,15 +164,22 @@ func (skv *ShoppingTxnKVStore) PayRecord(initRet interface{}) (errCode int, rbf 
 	defer func() { fmt.Println("PayRecord end:", errCode) }()
 	args := initRet.(PayOrderTxnInitRet)
 
-	// Record the order.
-	oldValue, existed := skv.Put(args.OrderKey, args.OrderValue)
+	// must exist
+	orderValue, _ := skv.Get(args.OrderKey)
+
+	hasPaid, price, num, detail := parseOrderValue(orderValue)
+
+	if hasPaid {
+		rbf = twopc.BlankRollbackFunc
+		errCode = TxnOrderPaid
+		return
+	}
+
+	newOrderValue := composeOrderValue(true, price, num, detail)
+	oldValue, _ := skv.Put(args.OrderKey, newOrderValue)
 
 	rbf = twopc.RollbackFunc(func() {
-		if existed {
-			skv.Put(args.OrderKey, oldValue)
-		} else {
-			skv.Del(args.OrderKey)
-		}
+		skv.Put(args.OrderKey, oldValue)
 	})
 
 	errCode = TxnOK

@@ -91,6 +91,9 @@ func parseOrderValue(value string) (hasPaid bool, price, num int, detail map[int
 		hasPaid = false
 	}
 
+	if len(info) != 3 {
+		panic(value)
+	}
 	price, _ = strconv.Atoi(info[1])
 	num, detail = parseCartValue(info[2])
 	return

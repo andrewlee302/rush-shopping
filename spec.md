@@ -264,7 +264,15 @@ POST /orders?access_token=xxx
 }
 ```
 
+购物车为空
 
+```
+403 Forbidden
+{
+    "code": "CART_EMPTY",
+    "message": "购物车为空"
+}
+```
 
 物品库存不足
 
@@ -273,16 +281,6 @@ POST /orders?access_token=xxx
 {
     "code": "ITEM_OUT_OF_STOCK",
     "message": "物品库存不足"
-}
-```
-
-购物车为空
-
-```
-403 Forbidden
-{
-    "code": "CART_EMPTY",
-    "message": "购物车为空"
 }
 ```
 
@@ -318,7 +316,10 @@ POST /pay?access_token=xxx
 #### 响应示例
 
 ```
-204 No content
+200 OK
+{
+    "order_id ": "someorderid"
+}
 ```
 
 #### 异常示例
