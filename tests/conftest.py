@@ -142,6 +142,11 @@ def make_order(uid, token, cart_id, item_items):
         order_store[res.json()["order_id"]] = {"user_id": uid, "items": item_items}
     return res
 
+def pay_order(uid, token, order_id):
+    res = json_post("/pay", token, {"order_id": order_id})
+
+    return res
+
 
 def simple_make_order(item_items):
     uid, token = next(token_gen)

@@ -82,8 +82,8 @@ type AddItemTxnInitArgs struct {
 type AddItemTxnInitRet AddItemTxnInitArgs
 
 func AddItemTxnInit(args interface{}) (ret interface{}, errCode int) {
-	initArgs := args.(AddItemTxnInitArgs)
-	ret = AddItemTxnInitRet(initArgs)
+	initArgs := args.(*AddItemTxnInitArgs)
+	ret = AddItemTxnInitRet(*initArgs)
 	errCode = 0
 	return
 }
@@ -102,11 +102,11 @@ func (stc *ShoppingTxnCoordinator) AsyncAddItemTxn(args *AddItemArgs, txnID *str
 
 	txn.AddTxnPart(cartKey, "CartAddItem")
 
-	initArgs := AddItemTxnInitArgs{OrderKey: orderKey,
+	initArgs := &AddItemTxnInitArgs{OrderKey: orderKey,
 		CartKey:   cartKey,
 		CartIDStr: args.CartIDStr, ItemID: args.ItemID,
 		AddItemCnt: args.AddItemCnt}
-	fmt.Println("AsyncAddItemTxn", initArgs)
+	// fmt.Println("AsyncAddItemTxn", initArgs)
 	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
 	return nil
 }
@@ -116,7 +116,7 @@ func (stc *ShoppingTxnCoordinator) Run() {
 		task.txn.Start(task.initArgs)
 		var reply twopc.TxnState
 		stc.coord.SyncTxnEnd(&task.txn.ID, &reply)
-		fmt.Println("process", reply.State, reply.ErrCode)
+		// fmt.Println("process", reply.State, reply.ErrCode)
 	}
 }
 
@@ -174,21 +174,15 @@ func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, tx
 	txn := stc.coord.NewTxn(SubmitOrderTxnInit, stc.keyHashFunc, stc.timeoutMs)
 	*txnID = txn.ID
 
-	txn.AddTxnPart(CartIDMaxKey, "CartExist2")
-
-	txn.AddTxnPart(cartKey, "CartAuthAndEmpty")
-
 	txn.BroadcastTxnPart("ItemsStockMinus")
 
 	txn.AddTxnPart(orderKey, "OrderRecord")
 
-	// TODO?
-	// client: client,
 	initArgs := &SubmitOrderTxnInitArgs{stc: stc, hub: stc.hub,
 		CartIDStr: args.CartIDStr, CartKey: cartKey,
 		OrderKey: orderKey}
 
-	fmt.Println("AsyncSubmitOrderTxn", initArgs)
+	// fmt.Println("AsyncSubmitOrderTxn", initArgs)
 	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}
 	return nil
 }
@@ -197,51 +191,22 @@ func (stc *ShoppingTxnCoordinator) AsyncSubmitOrderTxn(args *SubmitOrderArgs, tx
 type PayOrderArgs struct {
 	OrderIDStr string
 	UserToken  string
+	Delta      int
 }
 
 type PayOrderTxnInitArgs struct {
 	hub            *ShardsClientHub
-	OrderIDStr     string
-	UserToken      string
 	OrderKey       string
 	BalanceKey     string
 	RootBalanceKey string
+	Delta          int
 }
 
-type PayOrderTxnInitRet struct {
-	PayOrderTxnInitArgs
-	OrderValue string
-	Delta      int
-}
+type PayOrderTxnInitRet PayOrderTxnInitArgs
 
 func PayOrderTxnInit(args interface{}) (ret interface{}, errCode int) {
 	initArgs := args.(*PayOrderTxnInitArgs)
-
-	if initArgs.OrderIDStr != initArgs.UserToken {
-		errCode = TxnNotAuth
-		return
-	}
-
-	// Test whether the order exists, or it belongs other users.
-	ok, reply := initArgs.hub.Get(initArgs.OrderKey)
-	if !ok {
-		errCode = -3
-		return
-	}
-	if !reply.Flag {
-		errCode = TxnNotFound
-		return
-	}
-
-	// Test whether the order have been paid.
-	hasPaid, price, num, detail := parseOrderValue(reply.Value)
-	if hasPaid {
-		errCode = TxnOrderPaid
-		return
-	}
-	orderValue := composeOrderValue(true, price, num, detail)
-	ret = PayOrderTxnInitRet{PayOrderTxnInitArgs: *initArgs,
-		OrderValue: orderValue, Delta: price}
+	ret = PayOrderTxnInitRet(*initArgs)
 	errCode = 0
 	return
 }
@@ -263,7 +228,7 @@ func (stc *ShoppingTxnCoordinator) AsyncPayOrderTxn(args *PayOrderArgs, txnID *s
 
 	initArgs := &PayOrderTxnInitArgs{hub: stc.hub,
 		BalanceKey: balanceKey, RootBalanceKey: rootBalanceKey,
-		UserToken: args.UserToken, OrderIDStr: args.OrderIDStr}
+		OrderKey: orderKey, Delta: args.Delta}
 
 	fmt.Println("AsyncPayOrderTxn", initArgs)
 	stc.tasks <- &TxnTask{txn: txn, initArgs: initArgs}

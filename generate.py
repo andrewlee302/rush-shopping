@@ -9,8 +9,10 @@ USER_CSV = "data/users.csv"
 ITEM_CSV = "data/items.csv"
 INIT_ROOT_MONEY = 0
 INIT_MONEY = 1000
-NUM_USERS = 2000
-NUM_ITEMS = 2000
+NUM_USERS = 20000
+NUM_ITEMS = 20000
+MAX_STOCK = 100
+MAX_PRICE = 300
 
 if not os.path.exists("data"):
     os.mkdir("data")
@@ -32,7 +34,6 @@ with open(USER_CSV, 'w') as f:
 print "Generate %d items -> %s" %(NUM_ITEMS, ITEM_CSV)
 with open(ITEM_CSV, 'w') as f:
     for i in range(1, NUM_ITEMS+1):
-        price = random.randint(1,101)
-        # stock = random.randint(1,21) * 5
-        stock = random.randint(1,21) * 20
+        price = random.randint(1,MAX_PRICE+1)
+        stock = random.randint(1,MAX_STOCK)
         f.write("%d,%d,%d\n" % (i, price, stock))

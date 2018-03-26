@@ -38,15 +38,22 @@ type Worker struct {
 }
 
 type Context struct {
-	c      *http.Client
-	w      *Worker
-	user   User
-	cartId string
+	c       *http.Client
+	w       *Worker
+	user    User
+	orderId string
+	cartId  string
+}
+
+type TimeInterval struct {
+	start    int64
+	end      int64
+	interval int64
 }
 
 type Reporter struct {
-	orderMade       chan bool
-	orderCost       chan time.Duration
+	payMade         chan bool
+	payIntervals    chan TimeInterval
 	requestSent     chan bool
 	userCurr        chan User
 	numOrders       int
@@ -55,7 +62,7 @@ type Reporter struct {
 	nOrderErr       int
 	nOrderTotal     int
 	nOrderPerSec    []int
-	orderCosts      []time.Duration
+	payCosts        []time.Duration
 	nRequestOk      int
 	nRequestErr     int
 	nRequestTotal   int
@@ -98,6 +105,10 @@ type RequestMakeOrder struct {
 	CartId string `json:"cart_id"`
 }
 
+type RequestPayOrder struct {
+	OrderId string `json:"order_id"`
+}
+
 //----------------------------------
 // Response JSON Bindings
 //----------------------------------
@@ -114,10 +125,18 @@ type ResponseCreateCart struct {
 }
 
 type ResponseMakeOrder struct {
+	OrderId string `json:"order_id"`
+}
+
+type ResponsePayOrder struct {
+	OrderId string `json:"order_id"`
+}
+
+type ResponseQueryOrder struct {
 	Id   string `json:"id"`
 	Item []struct {
-		ItemId int
-		Count  int
+		ItemId int `json:"item_id"`
+		Count  int `json:"count"`
 	} `json:"items"`
 	Total int `json:"total"`
 }
@@ -401,11 +420,36 @@ func (ctx *Context) MakeOrder() bool {
 		return false
 	}
 	if statusCode == http.StatusOK {
+		ctx.orderId = body.OrderId
 		ctx.w.r.requestSent <- true
 		return true
 	}
 	ctx.w.r.requestSent <- false
 	return false
+}
+
+func (ctx *Context) PayOrder() bool {
+	if !ctx.MakeOrder() {
+		return false
+	}
+	url := ctx.UrlWithToken("/pay")
+	data := &RequestPayOrder{ctx.orderId}
+	body := &ResponsePayOrder{}
+	statusCode, err := ctx.w.Post(ctx.c, url, data, body)
+	if err != nil {
+		if isDebugMode {
+			fmt.Printf("Request pay order error: %v\n", err)
+		}
+		ctx.w.r.requestSent <- false
+		return false
+	}
+	if statusCode == http.StatusOK {
+		ctx.w.r.requestSent <- true
+		return true
+	}
+	ctx.w.r.requestSent <- false
+	return false
+
 }
 
 //----------------------------------
@@ -430,8 +474,9 @@ func (w *Worker) Work() {
 		t.CloseIdleConnections()
 		startAt := time.Now()
 		ctx.user = <-w.r.userCurr
-		w.r.orderMade <- ctx.MakeOrder()
-		w.r.orderCost <- time.Since(startAt)
+		w.r.payMade <- ctx.PayOrder()
+		endAt := time.Now()
+		w.r.payIntervals <- TimeInterval{start: startAt.UnixNano(), end: endAt.UnixNano(), interval: endAt.Sub(startAt).Nanoseconds()}
 	}
 }
 
@@ -442,7 +487,7 @@ func (w *Worker) Work() {
 func NewReporter(numOrders int, cocurrency int) *Reporter {
 	return &Reporter{
 		make(chan bool, cocurrency),
-		make(chan time.Duration, cocurrency),
+		make(chan TimeInterval, cocurrency),
 		make(chan bool, cocurrency),
 		make(chan User, cocurrency),
 		numOrders,
@@ -481,11 +526,11 @@ func (r *Reporter) Start() {
 	}()
 	go func() {
 		for {
-			orderMade := <-r.orderMade
-			orderCost := <-r.orderCost
-			if orderMade {
+			payMade := <-r.payMade
+			payInterval := <-r.payIntervals
+			if payMade {
 				r.nOrderOk = r.nOrderOk + 1
-				r.orderCosts = append(r.orderCosts, orderCost)
+				r.payCosts = append(r.payCosts, time.Duration(payInterval.interval))
 			} else {
 				r.nOrderErr = r.nOrderErr + 1
 			}
@@ -540,14 +585,14 @@ func (r *Reporter) Report() {
 	nRequestPerSecMin := MeanOfMinFive(r.nRequestPerSec)
 	nRequestPerSecMean := Mean(r.nRequestPerSec)
 	sort.Ints(r.nRequestPerSec)
-	orderCostSeconds := []float64{}
-	for i := 0; i < len(r.orderCosts); i++ {
-		orderCostSeconds = append(orderCostSeconds, r.orderCosts[i].Seconds())
+	payCostNanoseconds := []float64{}
+	for i := 0; i < len(r.payCosts); i++ {
+		payCostNanoseconds = append(payCostNanoseconds, float64(r.payCosts[i].Nanoseconds()))
 	}
-	sort.Float64s(orderCostSeconds)
+	sort.Float64s(payCostNanoseconds)
 	msTakenTotal := int(r.elapsed.Nanoseconds() / 1000000.0)
-	msPerOrder := MeanFloat64(orderCostSeconds) * 1000.0
-	msPerRequest := SumFloat64(orderCostSeconds) * 1000.0 / float64(r.nRequestOk)
+	msPerOrder := MeanFloat64(payCostNanoseconds) / 1000000.0
+	msPerRequest := SumFloat64(payCostNanoseconds) / 1000000.0 / float64(r.nRequestOk)
 	//---------------------------------------------------
 	// Report to console
 	//---------------------------------------------------
@@ -563,19 +608,19 @@ func (r *Reporter) Report() {
 	fmt.Printf("Request per second:        %d (max)  %d (min)  %d(mean)\n", nRequestPerSecMax, nRequestPerSecMin, nRequestPerSecMean)
 	fmt.Printf("Order per second:          %d (max)  %d (min)  %d (mean)\n\n", nOrderPerSecMax, nOrderPerSecMin, nOrderPerSecMean)
 	fmt.Printf("Percentage of orders made within a certain time (ms)\n")
-	if len(orderCostSeconds) == 0 {
+	if len(payCostNanoseconds) == 0 {
 		return
 	}
 	percentages := []int{50, 75, 80, 90, 95, 98, 100}
 	for _, percentage := range percentages {
-		idx := int(float64(percentage*len(orderCostSeconds)) / float64(100.0))
+		idx := int(float64(percentage*len(payCostNanoseconds)) / float64(100.0))
 		if idx > 0 {
 			idx = idx - 1
 		} else {
 			idx = 0
 		}
-		orderCostSecond := orderCostSeconds[idx]
-		fmt.Printf("%d%%\t%d\n", percentage, int(orderCostSecond*1000.0))
+		payCostNanosecond := payCostNanoseconds[idx]
+		fmt.Printf("%d%%\t%d ms\n", percentage, int(payCostNanosecond/1000000.0))
 	}
 	//---------------------------------------------------
 	// Report to redis
