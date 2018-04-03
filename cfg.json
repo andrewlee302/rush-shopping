@@ -1,0 +1,15 @@
+{
+    "Protocol": "tcp",
+    "APPAddrs": [
+        "localhost:10000"
+    ],
+    "CoordinatorAddr": "localhost:9999",
+    "KVStoreAddrs": [
+        "localhost:11001",
+        "localhost:11002",
+        "localhost:11003"
+    ],
+    "ItemCSV": "data/items.csv",
+    "UserCSV": "data/users.csv",
+    "TimeoutMS": 50
+}

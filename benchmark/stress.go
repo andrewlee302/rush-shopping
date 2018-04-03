@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"rush-shopping/util"
 	"sort"
 	"strconv"
 	"time"
@@ -32,8 +33,7 @@ const (
 type Worker struct {
 	r   *Reporter
 	ctx struct {
-		hosts []string
-		port  string
+		addrs []string
 	}
 }
 
@@ -209,9 +209,9 @@ func LoadItems(itemCsv string) {
 // Build url with path and parameters.
 func (w *Worker) Url(path string, params url.Values) string {
 	// random choice one host for load balance
-	i := rand.Intn(len(w.ctx.hosts))
-	host := w.ctx.hosts[i]
-	s := fmt.Sprintf("http://%s:%s%s", host, w.ctx.port, path)
+	i := rand.Intn(len(w.ctx.addrs))
+	addr := w.ctx.addrs[i]
+	s := fmt.Sprintf("http://%s%s", addr, path)
 	if params == nil {
 		return s
 	}
@@ -455,11 +455,10 @@ func (ctx *Context) PayOrder() bool {
 //----------------------------------
 // Worker
 //----------------------------------
-func NewWorker(hosts []string, port string, r *Reporter) *Worker {
+func NewWorker(addrs []string, r *Reporter) *Worker {
 	w := &Worker{}
 	w.r = r
-	w.ctx.hosts = hosts
-	w.ctx.port = port
+	w.ctx.addrs = addrs
 	return w
 }
 func (w *Worker) Work() {
@@ -622,33 +621,6 @@ func (r *Reporter) Report() {
 		payCostNanosecond := payCostNanoseconds[idx]
 		fmt.Printf("%d%%\t%d ms\n", percentage, int(payCostNanosecond/1000000.0))
 	}
-	//---------------------------------------------------
-	// Report to redis
-	//---------------------------------------------------
-	// if !isReportToRedis {
-	// 	return
-	// }
-	// conn, err := redis.Dial("tcp", REDIS_LOCAL_ADDR)
-	// defer conn.Close()
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// conn.Do("SET", "stress_test:make_order:success", r.nOrderOk)
-	// conn.Do("SET", "stress_test:make_order:failure", r.nOrderErr)
-	// conn.Do("SET", "stress_test:make_order:req_success", r.nRequestErr)
-	// conn.Do("SET", "stress_test:make_order:req_failure", r.nRequestErr)
-	// conn.Do("SET", "stress_test:make_order:max_order_sec", nOrderPerSecMax)
-	// conn.Do("SET", "stress_test:make_order:min_order_sec", nOrderPerSecMin)
-	// conn.Do("SET", "stress_test:make_order:mean_order_sec", nOrderPerSecMean)
-	// conn.Do("SET", "stress_test:make_order:max_req_sec", nRequestPerSecMax)
-	// conn.Do("SET", "stress_test:make_order:min_req_sec", nRequestPerSecMin)
-	// conn.Do("SET", "stress_test:make_order:mean_req_sec", nRequestPerSecMean)
-	// conn.Do("SET", "stress_test:make_order:time_per_order", msPerOrder)
-	// conn.Do("SET", "stress_test:make_order:time_per_req", msPerRequest)
-	// for i := 0; i < len(r.timeStampPerSec); i++ {
-	// 	conn.Do("HSET", "stress_test:make_order:order_sec", r.timeStampPerSec[i], r.nOrderPerSec[i])
-	// 	conn.Do("HSET", "stress_test:make_order:req_sec", r.timeStampPerSec[i], r.nRequestPerSec[i])
-	// }
 }
 
 //----------------------------------
@@ -719,32 +691,17 @@ func SumFloat64(arr []float64) float64 {
 //----------------------------------
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	appHost := os.Getenv("APP_HOST")
-	appPort := os.Getenv("APP_PORT")
-	if appHost == "" {
-		appHost = "localhost"
-	}
-	if appPort == "" {
-		appPort = "8080"
-	}
-	// appAddr := fmt.Sprintf("%s:%s", appHost, appPort)
 
-	// kvstoreHost := os.Getenv("KVSTORE_HOST")
-	// kvstorePort := os.Getenv("KVSTORE_PORT")
-	// kvstoreAddr := fmt.Sprintf("%s:%s", kvstoreHost, kvstorePort)
-
-	userCsv := os.Getenv("USER_CSV")
-	itemCsv := os.Getenv("ITEM_CSV")
 	//----------------------------------
 	// Arguments parsing and validation
 	//----------------------------------
-	// hosts := flag.String("h", "localhost", "server hosts, split by comma")
-	// port := flag.Int("p", 8080, "server port")
+	config := flag.String("f", "cfg.json", "config file")
 	cocurrency := flag.Int("c", 1000, "request cocurrency")
 	numOrders := flag.Int("n", 1000, "number of orders to perform")
 	debug := flag.Bool("d", false, "debug mode")
 	// reportRedis := flag.Bool("r", true, "report to local redis")
 	flag.Parse()
+	cfg := util.ParseCfg(*config)
 	// if flag.NFlag() == 0 {
 	// 	flag.PrintDefaults()
 	// 	os.Exit(1)
@@ -765,11 +722,11 @@ func main() {
 	//----------------------------------
 	// Load users/items and work
 	//----------------------------------
-	LoadData(userCsv, itemCsv)
+	LoadData(cfg.UserCSV, cfg.ItemCSV)
 	reporter := NewReporter(*numOrders, *cocurrency)
 	for i := 0; i < *cocurrency; i++ {
 		go func() {
-			w := NewWorker([]string{appHost}, appPort, reporter)
+			w := NewWorker(cfg.APPAddrs, reporter)
 			w.Work()
 		}()
 	}

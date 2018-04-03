@@ -28,16 +28,16 @@ type TxnTask struct {
 
 const DefaultTaskMaxSize = 10000
 
-func NewShoppingTxnCoordinator(coord string, ppts []string,
+func NewShoppingTxnCoordinator(network, coord string, ppts []string,
 	keyHashFunc twopc.KeyHashFunc, timeoutMs int64) *ShoppingTxnCoordinator {
-	sts := &ShoppingTxnCoordinator{coord: twopc.NewCoordinator("tcp", coord, ppts),
+	sts := &ShoppingTxnCoordinator{coord: twopc.NewCoordinator(network, coord, ppts),
 		keyHashFunc: keyHashFunc, timeoutMs: timeoutMs,
-		hub:   NewShardsClientHub("tcp", ppts, keyHashFunc, 1),
+		hub:   NewShardsClientHub(network, ppts, keyHashFunc, 1),
 		tasks: make(chan *TxnTask, DefaultTaskMaxSize)}
 	go func() {
 		for _ = range time.Tick(time.Second * 5) {
 			ns := atomic.LoadInt64(&util.RPCCallNs)
-			fmt.Println("RPCCall cost ms:", ns/time.Millisecond.Nanoseconds(), ns)
+			fmt.Printf("RPCCall cost %v ms\n", ns/time.Millisecond.Nanoseconds())
 		}
 	}()
 	sts.coord.RegisterService(sts)

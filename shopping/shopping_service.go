@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -108,11 +109,11 @@ type ShopServer struct {
 const DefaultShardClientPoolMaxSize = 100
 const DefaultCoordClientPoolMaxSize = 100
 
-func InitService(appAddr, coordAddr, userCsv, itemCsv string,
+func InitService(network, appAddr, coordAddr, userCsv, itemCsv string,
 	kvstoreAddrs []string, keyHashFunc twopc.KeyHashFunc) *ShopServer {
 	ss := new(ShopServer)
-	ss.coordClients = NewCoordClients("tcp", coordAddr, DefaultCoordClientPoolMaxSize)
-	ss.clientHub = NewShardsClientHub("tcp", kvstoreAddrs, keyHashFunc, DefaultShardClientPoolMaxSize)
+	ss.coordClients = NewCoordClients(network, coordAddr, DefaultCoordClientPoolMaxSize)
+	ss.clientHub = NewShardsClientHub(network, kvstoreAddrs, keyHashFunc, DefaultShardClientPoolMaxSize)
 	ss.loadUsersAndItems(userCsv, itemCsv)
 
 	handler := http.NewServeMux()
@@ -151,7 +152,10 @@ func (ss *ShopServer) Kill() {
  */
 func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 	log.Println("Load user and item data to kvstore")
-	defer log.Println("Finished data loading")
+	now := time.Now()
+	defer func() {
+		log.Printf("Finished data loading, cost %v ms\n", time.Since(now).Nanoseconds()/int64(time.Millisecond))
+	}()
 
 	ss.clientHub.Put(CartIDMaxKey, "0")
 

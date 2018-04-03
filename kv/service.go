@@ -31,7 +31,7 @@ func NewKVStore() *KVStore {
 	go func() {
 		for _ = range time.Tick(time.Second * 5) {
 			ns := atomic.LoadInt64(&ks.costNs)
-			fmt.Println("KVStore cost ms:", ns/time.Millisecond.Nanoseconds(), ns)
+			fmt.Printf("KVStore cost %v ms\n", ns/time.Millisecond.Nanoseconds())
 		}
 	}()
 	return ks
