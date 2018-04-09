@@ -30,7 +30,11 @@ const DefaultTaskMaxSize = 10000
 
 func NewShoppingTxnCoordinator(network, coord string, ppts []string,
 	keyHashFunc twopc.KeyHashFunc, timeoutMs int64) *ShoppingTxnCoordinator {
-	sts := &ShoppingTxnCoordinator{coord: twopc.NewCoordinator(network, coord, ppts),
+	coordS := twopc.NewCoordinator(network, coord, ppts)
+	if coordS == nil {
+		return nil
+	}
+	sts := &ShoppingTxnCoordinator{coord: coordS,
 		keyHashFunc: keyHashFunc, timeoutMs: timeoutMs,
 		hub:   NewShardsClientHub(network, ppts, keyHashFunc, 1),
 		tasks: make(chan *TxnTask, DefaultTaskMaxSize)}

@@ -9,9 +9,9 @@ USER_CSV = "data/users.csv"
 ITEM_CSV = "data/items.csv"
 INIT_ROOT_MONEY = 0
 INIT_MONEY = 1000
-NUM_USERS = 20000
+NUM_USERS = 5000
 NUM_ITEMS = 20000
-MAX_STOCK = 100
+MAX_STOCK = 200
 MAX_PRICE = 300
 
 if not os.path.exists("data"):
