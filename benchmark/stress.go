@@ -610,16 +610,16 @@ func (r *Reporter) Report() {
 	if len(payCostNanoseconds) == 0 {
 		return
 	}
-	percentages := []int{50, 75, 80, 90, 95, 98, 100}
+	percentages := []float64{10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 95.5, 96, 96.5, 97, 97.5, 98, 98.5, 99, 99.9, 99.99, 100}
 	for _, percentage := range percentages {
-		idx := int(float64(percentage*len(payCostNanoseconds)) / float64(100.0))
+		idx := int(percentage * float64(len(payCostNanoseconds)) / float64(100.0))
 		if idx > 0 {
 			idx = idx - 1
 		} else {
 			idx = 0
 		}
 		payCostNanosecond := payCostNanoseconds[idx]
-		fmt.Printf("%d%%\t%d ms\n", percentage, int(payCostNanosecond/1000000.0))
+		fmt.Printf("%.2f%%\t%d ms\n", percentage, int(payCostNanosecond/1000000.0))
 	}
 }
 

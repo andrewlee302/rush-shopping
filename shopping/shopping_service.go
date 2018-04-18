@@ -164,14 +164,20 @@ func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 
 	ss.UserMap = make(map[string]UserIDAndPass)
 
+	var wg sync.WaitGroup
+
 	// read users
 	if file, err := os.Open(userCsv); err == nil {
 		reader := csv.NewReader(file)
 		for strs, err := reader.Read(); err == nil; strs, err = reader.Read() {
+			wg.Add(1)
 			userID, _ := strconv.Atoi(strs[0])
 			ss.UserMap[strs[1]] = UserIDAndPass{userID, strs[2]}
 			userToken := userID2Token(userID)
-			ss.clientHub.Put(BalanceKeyPrefix+userToken, strs[3])
+			go func(token, value string) {
+				ss.clientHub.Put(BalanceKeyPrefix+token, value)
+				wg.Done()
+			}(userToken, strs[3])
 			if userID > ss.MaxUserID {
 				ss.MaxUserID = userID
 			}
@@ -194,14 +200,22 @@ func (ss *ShopServer) loadUsersAndItems(userCsv, itemCsv string) {
 			stock, _ := strconv.Atoi(strs[2])
 			ss.ItemListCache = append(ss.ItemListCache, Item{ID: itemID, Price: price, Stock: stock})
 
-			ss.clientHub.Put(ItemsPriceKeyPrefix+strs[0], strs[1])
-			ss.clientHub.Put(ItemsStockKeyPrefix+strs[0], strs[2])
+			wg.Add(2)
+			go func(key, value string) {
+				ss.clientHub.Put(ItemsPriceKeyPrefix+key, value)
+				wg.Done()
+			}(strs[0], strs[1])
+			go func(key, value string) {
+				ss.clientHub.Put(ItemsStockKeyPrefix+key, value)
+				wg.Done()
+			}(strs[0], strs[2])
 
 			if itemID > ss.MaxItemID {
 				ss.MaxItemID = itemID
 			}
 		}
 		ss.ItemsJSONCache, _ = json.Marshal(ss.ItemListCache[1:])
+		wg.Wait()
 		ss.clientHub.Put(ItemsSizeKey, strconv.Itoa(itemCnt))
 
 		file.Close()
