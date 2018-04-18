@@ -23,7 +23,7 @@ import (
 // Stress Settings
 //----------------------------------
 const (
-	MAX_COCURRENCY = 10 * 1024
+	MAX_COCURRENCY = 1024 * 1024
 	TIMEOUT_SEC    = 10
 )
 
@@ -470,7 +470,7 @@ func (w *Worker) Work() {
 		Transport: t,
 	}
 	for {
-		t.CloseIdleConnections()
+		// t.CloseIdleConnections()
 		startAt := time.Now()
 		ctx.user = <-w.r.userCurr
 		w.r.payMade <- ctx.PayOrder()

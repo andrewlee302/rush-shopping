@@ -30,7 +30,11 @@ const DefaultTaskMaxSize = 10000
 
 func NewShoppingTxnCoordinator(network, coord string, ppts []string,
 	keyHashFunc twopc.KeyHashFunc, timeoutMs int64) *ShoppingTxnCoordinator {
-	sts := &ShoppingTxnCoordinator{coord: twopc.NewCoordinator(network, coord, ppts),
+	coordS := twopc.NewCoordinator(network, coord, ppts)
+	if coordS == nil {
+		return nil
+	}
+	sts := &ShoppingTxnCoordinator{coord: coordS,
 		keyHashFunc: keyHashFunc, timeoutMs: timeoutMs,
 		hub:   NewShardsClientHub(network, ppts, keyHashFunc, 1),
 		tasks: make(chan *TxnTask, DefaultTaskMaxSize)}
@@ -111,12 +115,12 @@ func (stc *ShoppingTxnCoordinator) AsyncAddItemTxn(args *AddItemArgs, txnID *str
 	return nil
 }
 
+// TODO: how to deploit the potential of parallelism.
 func (stc *ShoppingTxnCoordinator) Run() {
 	for task := range stc.tasks {
 		task.txn.Start(task.initArgs)
 		var reply twopc.TxnState
 		stc.coord.SyncTxnEnd(&task.txn.ID, &reply)
-		// fmt.Println("process", reply.State, reply.ErrCode)
 	}
 }
 

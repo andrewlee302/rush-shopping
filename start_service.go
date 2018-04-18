@@ -3,13 +3,13 @@ package main
 import (
 	"distributed-system/twopc"
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"os"
 	"runtime/pprof"
 	"rush-shopping/shopping"
 	"rush-shopping/util"
+	"strings"
 )
 
 func main() {
@@ -33,42 +33,49 @@ func main() {
 
 	keyHashFunc := twopc.DefaultKeyHashFunc
 
+	addrs, _ := net.InterfaceAddrs()
+	host_ips := make(map[string]struct{})
+	for _, addr := range addrs {
+		host_ips[strings.Split(addr.String(), "/")[0]] = struct{}{}
+	}
+
 	blocked := false
 	if *parti {
 		for _, pptAddr := range cfg.KVStoreAddrs {
-			if ip, _, err := net.SplitHostPort(pptAddr); err == nil {
-				if _, err := net.LookupHost(ip); err == nil {
-					blocked = true
-					go shopping.NewShoppingTxnKVStoreService(cfg.Protocol, pptAddr, cfg.CoordinatorAddr)
-				} else {
-					fmt.Println(err)
+			if domain, _, err := net.SplitHostPort(pptAddr); err == nil {
+				if ips, err := net.LookupHost(domain); err == nil {
+					if _, ok := host_ips[ips[0]]; ok {
+						blocked = true
+						go shopping.NewShoppingTxnKVStoreService(cfg.Protocol, pptAddr, cfg.CoordinatorAddr)
+					}
 				}
 			}
 		}
 	}
 
 	if *coord {
-		if ip, _, err := net.SplitHostPort(cfg.CoordinatorAddr); err == nil {
-			if _, err := net.LookupHost(ip); err == nil {
-				blocked = true
-				go shopping.NewShoppingTxnCoordinator(cfg.Protocol, cfg.CoordinatorAddr,
-					cfg.KVStoreAddrs, keyHashFunc, cfg.TimeoutMS)
-			} else {
-				fmt.Println(err)
+		if domain, _, err := net.SplitHostPort(cfg.CoordinatorAddr); err == nil {
+			if ips, err := net.LookupHost(domain); err == nil {
+				if _, ok := host_ips[ips[0]]; ok {
+					blocked = true
+					go shopping.NewShoppingTxnCoordinator(cfg.Protocol, cfg.CoordinatorAddr,
+						cfg.KVStoreAddrs, keyHashFunc, cfg.TimeoutMS)
+				}
 			}
 		}
 	}
 
 	if *web {
 		for _, appAddr := range cfg.APPAddrs {
-			if ip, _, err := net.SplitHostPort(appAddr); err == nil {
-				if _, err := net.LookupHost(ip); err == nil {
-					blocked = true
-					shopping.InitService(cfg.Protocol, appAddr, cfg.CoordinatorAddr, cfg.UserCSV, cfg.ItemCSV,
-						cfg.KVStoreAddrs, keyHashFunc)
+			if domain, _, err := net.SplitHostPort(appAddr); err == nil {
+				if ips, err := net.LookupHost(domain); err == nil {
+					if _, ok := host_ips[ips[0]]; ok {
+						blocked = true
+						go shopping.InitService(cfg.Protocol, appAddr, cfg.CoordinatorAddr, cfg.UserCSV, cfg.ItemCSV,
+							cfg.KVStoreAddrs, keyHashFunc)
+					}
 				}
 			}
-
 		}
 	}
 	if blocked {

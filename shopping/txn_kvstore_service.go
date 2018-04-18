@@ -27,6 +27,9 @@ type ShoppingTxnKVStoreService struct {
 // NewShoppingTxnKVStoreService starts the transaction-enabled kvstore.
 func NewShoppingTxnKVStoreService(network, addr, coordAddr string) *ShoppingTxnKVStoreService {
 	ppt := twopc.NewParticipant(network, addr, coordAddr)
+	if ppt == nil {
+		return nil
+	}
 	sks := NewShoppingTxnKVStore()
 
 	gob.Register(AddItemTxnInitRet{})
